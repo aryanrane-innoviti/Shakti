@@ -1,0 +1,55 @@
+2. Loading the Data
+All data loading operations must be exposed as API endpoints that accept file uploads or structured payloads. The UI described below is built on top of these APIs.
+2.1 Payment Terminal Master (Object)
+This maintains a master record of all payment terminals (SKU type is always set to Payment Terminal in this option) ever purchased with their current state. The index used for creating unique entries is a combination of SKU number and Serial Number. No two rows can have the same combination. Its fields are as follows:
+•        Index: SKU number   Serial Number
+•        SKU number
+•        SKU name (derived from SKU number)
+•        SKU description (derived from SKU number)
+•        Date of Purchase
+•        Owner (should be from vendor list)
+•        Serial Number
+•        Present Location (the Present location of any SKU when uploaded by an admin should always be Null, and only when that SKU is audited its location will change to the user’s location who is auditing the SKU).
+•        Date Since at Present Location ( will be set after Audit )
+•        Last Audited Date
+•        State of Serial SKU Unit: Picklist – Working, Retrieved, Installed, In Repair, In Transit, Scrapped, Lost
+
+There may be ambiguity related to audit in a few fields here, keep them as it is. It will be resolved in the next phase. This object is updated through any journey that involves a payment terminal.
+2.2 SIM Card Master
+This maintains a master record of all SIM cards (SKU type is SIM cards) ever purchased with their current state. The index used for creating unique entries will be a combination of SKU Number and  SIM Card Number. No two rows can have the same Combination. Its fields are as follows:
+•        Index: SKU Number + Sim Card Number .
+•        SKU number
+•        SKU name (from number)
+•        SKU description (from number)
+•        SIM Card Number
+•        Present Location (the Present location of any SKU when master record is loaded should always be set to Null, Location is Set to user’s location only During the audit to the user’s location).
+•        Date Since at Present Location (Only after it is audited)
+•        State of Serial SKU Unit: Picklist – Inactive, Active, Blocked, Lost. A SIM can be put into any state from any state.
+The change in location of SKU will be described in further stages of the story. This object is updated through any journey that involves a SIM card.
+2.3 Accessories Master
+Accessories (Adaptors, Paper rolls, USB Cables are considered as accessories). This maintains a master record of all accessories (SKU type is accessories) ever purchased with their current state. Its fields are as follows:
+•        SKU number (this is the index also). No two rows can have the same SKU number.
+•        SKU name (from number)
+•        SKU description (from number)
+•        Qty in each state (Working, Retrieved, Installed, In Repair, In Transit, Scrapped, Lost)
+This object is updated through any journey that involves an accessory. The clicking of the SKU number provides a drill down into the same SKU but by location, with state in each location. It also for each location the last audit date.
+ 
+2.4 Load Existing Stock Data — Journey of setting up master data
+The admin user clicks on the Load Stock tab. He is taken to a new page where at the top the same options continue to show, below that there are 3 options:
+•        Load terminal data
+•        Load SIM card data
+•        Load accessory data
+The Store user will have the following options when he clicks on the load Stock tab:
+•        Load SIM card data
+•        Load accessory data
+On clicking any of them he is taken to a box where he can either drag and drop a file or to load a file through selection from the local disk.
+He clicks on load terminal data. He then drops a data file containing terminal S.Nos. and model numbers into it. The system intelligently maps the fields to the fields in the Payment Terminal type object. It shows the fields of the file on the left in multiple rows and fields of the object on the right with the field selected, and in case of fields not mapped shows a blank. Each field on the right has a drop down to select an alternative field. However one field on the left can be mapped to one field on the right only.
+2.4.1 Validation Rules
+The following fields should exist in the input file being loaded and have to match with fields from objects to which they point:
+•        SKU number
+•        Owner
+If an SKU number field does not match with an existing SKU number while uploading, then an error has to come up "SKU number in <row in error> of <file name> not found in Shakti, create SKU part or correct file".
+If an Owner field does not match with an existing Owner value while uploading, then an error has to come up "Owner in row <row in error> of file <file name> not found in Shakti, create Owner or correct file".
+While loading the data the default value of Status will be set to "Working".
+The same process can be followed for SIM cards and accessories. In all of these cases the SKU number has to exist in the system, if it does not exist then an error similar to the error shown above has to come up.
+While loading Serial type SKUs stock data the system has to check if the data being loaded is creating an existing index for that object type. If so it has to pop an error as follows: "<Serial Number>/<SIM Card Number> of <SKU number> in <row number> of <file name> already exists in Shakti, not loaded."

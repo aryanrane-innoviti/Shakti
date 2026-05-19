@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx jest:*)",
+      "PowerShell($cmd = Get-Command ssh -ErrorAction SilentlyContinue; if \\($cmd\\) { Write-Host \"ssh found at: $\\($cmd.Source\\)\" } else { Write-Host \"ssh NOT on PATH\" })",
+      "PowerShell($ErrorActionPreference = 'Continue'; $output = ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -v root@192.168.0.94 exit 2>&1 | Select-String -Pattern 'authentications that can continue|Permission denied|Connection refused|Connection timed out|Host key verification'; $output | ForEach-Object { Write-Host $_ })",
+      "PowerShell($keyPath = \"$env:USERPROFILE\\\\.ssh\\\\shakti_id_ed25519\"; if \\(Test-Path $keyPath\\) { Write-Host \"Key already exists at $keyPath — not overwriting\" } else { ssh-keygen -t ed25519 -f $keyPath -N '\"\"' -C \"claude-code@$env:COMPUTERNAME\" 2>&1 | ForEach-Object { Write-Host $_ } })",
+      "PowerShell(@\\('ssh-copy-id','sshpass','plink','pscp','putty'\\) | ForEach-Object { $c = Get-Command $_ -ErrorAction SilentlyContinue; if \\($c\\) { Write-Host \"$_`: $\\($c.Source\\)\" } else { Write-Host \"$_`: NOT FOUND\" } })",
+      "PowerShell($p = \"C:\\\\Windows\\\\System32\\\\OpenSSH\\\\ssh.exe\"; Write-Host \"Exists: $\\(Test-Path $p\\)\"; if \\(Test-Path $p\\) { & $p -V 2>&1 | ForEach-Object { Write-Host $_ } })",
+      "Bash(ssh -i /c/Users/kiran.kumar/.ssh/shakti_id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 vino@192.168.0.94 'bash -s')",
+      "PowerShell(Get-ChildItem -Force \"$env:USERPROFILE\\\\.ssh\" | Format-Table Name, Length, LastWriteTime -AutoSize | Out-String | Write-Host)",
+      "Bash(ssh -i /c/Users/kiran.kumar/.ssh/id_ed25519 -o BatchMode=yes -o ConnectTimeout=10 -o IdentitiesOnly=yes vino@192.168.0.94 'bash -s')",
+      "Bash(ssh -i /c/Users/kiran.kumar/.ssh/id_ed25519 -o BatchMode=yes vino@192.168.0.94 'bash -s')",
+      "Bash(ssh -i *)",
+      "PowerShell($tar = Get-Command tar -ErrorAction SilentlyContinue; if \\($tar\\) { Write-Host \"tar: $\\($tar.Source\\)\"; & $tar.Source --version 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host $_ } } else { Write-Host \"tar NOT FOUND\" })",
+      "Bash(tar --exclude=./node_modules '--exclude=*/node_modules' --exclude=./server/dist --exclude=./client/build --exclude=./server/coverage --exclude=./client/coverage --exclude=./.git '--exclude=*.log' -czf - .)",
+      "Bash(scp -i /c/Users/kiran.kumar/.ssh/id_ed25519 -o BatchMode=yes /e/git_repo/shakti/Dockerfile /e/git_repo/shakti/.dockerignore /e/git_repo/shakti/schema.sql vino@192.168.0.94:/home/vino/shakti/)",
+      "Bash(scp -i /c/Users/kiran.kumar/.ssh/id_ed25519 -o BatchMode=yes e:/git_repo/shakti/server/src/index.ts vino@192.168.0.94:/home/vino/shakti/server/src/index.ts)",
+      "Bash(docker *)",
+      "Bash(git fetch *)",
+      "Bash(dir /b /s \"D:\\\\Shakti\\\\Shakti_Gitlab\\\\shakti\\\\*.md\")",
+      "Bash(findstr /i \"test unit integration\")",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000\" -Method GET -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop; \"client:$\\($r.StatusCode\\)\" } catch { \"client:DOWN $\\($_.Exception.Message\\)\" }; try { $r = Invoke-WebRequest -Uri \"http://localhost:4000/api/health\" -Method GET -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop; \"server:$\\($r.StatusCode\\)\" } catch { \"server:DOWN $\\($_.Exception.Message\\)\" })",
+      "Bash(dir *)"
+    ]
+  }
+}

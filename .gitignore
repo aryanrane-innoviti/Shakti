@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+
+# Tooling output
+graphify-out/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+docs/~$*.docx

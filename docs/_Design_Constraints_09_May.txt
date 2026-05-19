@@ -1,0 +1,17 @@
+Design constraints:
+These are not to be violated under any condition.
+
+Inactive users should not be able to login.  No order generation, retrieval generation, and other flows connected to users should be allowed for them.
+If Inactive users have stock against them, that should continue to show against them.
+Any previous records of audits done by Inactive users, or information on dispatches done to them, or retrievals from them should continue to show against their name.
+Admin or store users reports should continue to show information against inactive users.
+A contact information cannot be added unless a vendor is selected against them.
+Only if the SKU type is a Payment Terminal, Base Station, or SIM Card can the STM can be Serial, in all other cases it is None.
+Whenever an order is split due to partial shipment, then the original order is marked as Split & Abandoned and two new split orders are created.
+The split orders have a suffixes that are incremented from the suffix of the order being split.
+First increment order number is given to the order being dispatched in the partial shipment.
+Second increment order number is given to the order that is Pending. 
+So if order being split is ORD-00005-00, then split order ORD-00005-01 will be given to the order being dispatched and ORD-00005-02 will be given to the order marked Pending.
+A Pending split order can further be split in case there is again a partial shipment against that.  Again the same logic applies.
+A Pending order can be split only against a dispatch, it cannot be split before dispatch.
+An audit can be done anytime by any user.  However, a user can do an audit only of items at the location locked to the user as per their user profile.
