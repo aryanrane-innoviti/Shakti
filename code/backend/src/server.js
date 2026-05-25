@@ -14,12 +14,14 @@ import vendorTypeRoutes from './routes/vendorTypes.js';
 import vendorRoutes from './routes/vendors.js';
 import skuTypeRoutes from './routes/skuTypes.js';
 import skuRoutes from './routes/skus.js';
-import terminalParentRoutes from './routes/terminalParentSkus.js';
+import vendorSkuRoutes from './routes/vendorSkus.js';
 import locationRoutes from './routes/locations.js';
 import changeLogRoutes from './routes/changeLog.js';
 import backupRoutes, { takeDailySnapshot } from './routes/backup.js';
 import pincodeRoutes from './routes/pincode.js';
 import dashboardRoutes from './routes/dashboard.js';
+import loadRoutes from './routes/loads.js';
+import stockRoutes from './routes/stock.js';
 
 async function main() {
   await initDb();
@@ -41,12 +43,14 @@ async function main() {
   app.use('/vendors', vendorRoutes);
   app.use('/sku-types', skuTypeRoutes);
   app.use('/skus', skuRoutes);
-  app.use('/terminal-parent-skus', terminalParentRoutes);
+  app.use('/vendor-skus', vendorSkuRoutes);
   app.use('/locations', locationRoutes);
   app.use('/change-log', changeLogRoutes);
   app.use('/backup', backupRoutes);
   app.use('/pincode', pincodeRoutes);
   app.use('/dashboard', dashboardRoutes);
+  app.use('/loads', loadRoutes);
+  app.use('/stock', stockRoutes);
 
   app.use((err, req, res, _next) => {
     if (err instanceof ValidationError) {

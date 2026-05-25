@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useAuth } from '../lib/auth.jsx';
+import GlobalLoader from '../components/GlobalLoader.jsx';
 
 export default function InitialSetup() {
   const { refresh, logout } = useAuth();
@@ -47,6 +48,7 @@ export default function InitialSetup() {
 
   return (
     <div className="auth-shell auth-setup">
+      <GlobalLoader />
       <section className="auth-poster">
         <div className="topline">
           <span className="pip" /> Initial Setup

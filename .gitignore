@@ -1,6 +1,12 @@
 # Dependencies
 node_modules/
 
+# Build output (Railway rebuilds this from source on deploy)
+code/frontend/dist/
+
+# Runtime file uploads (multer writes load files / tmp here)
+code/backend/uploads/
+
 # Environment
 .env
 .env.local
@@ -12,7 +18,15 @@ node_modules/
 # Tooling output
 graphify-out/
 
+# Test files and folders
+/test/
+code/backend/test/
+
+# Claude Code config
+.claude/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db
 docs/~$*.docx
+docs/~WRL*.tmp

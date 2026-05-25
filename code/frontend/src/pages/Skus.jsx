@@ -7,7 +7,7 @@ import Modal from '../components/Modal.jsx';
 const EMPTY = {
   sku_name: '', description: '', stm: '', sku_type_id: '',
   approx_price_moq: '', approx_price_unit: '',
-  adaptor_sku_ids: [], usb_cable_sku_ids: [], parent_sku_id: '',
+  adaptor_sku_ids: [], usb_cable_sku_ids: [], vendor_sku_ids: [],
 };
 
 export default function Skus() {
@@ -15,13 +15,11 @@ export default function Skus() {
   const [skus, setSkus] = useState([]);           // filtered list — drives the table
   const [allSkus, setAllSkus] = useState([]);     // unfiltered — drives the modal pickers
   const [types, setTypes] = useState([]);
-  const [parents, setParents] = useState([]);
   const [vendors, setVendors] = useState([]);
-  const [supplierCounts, setSupplierCounts] = useState({}); // sku_id → count
+  const [vendorSkus, setVendorSkus] = useState([]);
   const [edit, setEdit] = useState(null);
   const [errors, setErrors] = useState({});
   const [filter, setFilter] = useState({ sku_type_id: '', status: '', vendor_id: '' });
-  const [showDeleted, setShowDeleted] = useState(false);
 
   const fieldError = (name) => errors[name] || null;
   const fieldClass = (name) => (errors[name] ? 'has-error' : '');
@@ -31,34 +29,27 @@ export default function Skus() {
 
   const loadFiltered = () => {
     const parts = Object.entries(filter).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`);
-    if (showDeleted) parts.push('include_deleted=1');
     const q = parts.join('&');
-    api.get('/skus' + (q ? '?' + q : '')).then(async (rows) => {
-      setSkus(rows);
-      const counts = {};
-      await Promise.all(rows.map(async (s) => {
-        try {
-          const v = await api.get(`/skus/${s.sku_id}/vendors`);
-          counts[s.sku_id] = v.length;
-        } catch { counts[s.sku_id] = 0; }
-      }));
-      setSupplierCounts(counts);
-    });
+    // The list response now carries vendor_count per row (see backend
+    // routes/skus.js GET /). No per-row fetch needed.
+    api.get('/skus' + (q ? '?' + q : '')).then(setSkus);
   };
   const loadAll = () => api.get('/skus').then(setAllSkus);
-  useEffect(() => { loadFiltered(); }, [filter, showDeleted]);
+  const loadVendorSkus = () => api.get('/vendor-skus').then(setVendorSkus);
+  useEffect(() => { loadFiltered(); }, [filter]);
   useEffect(() => {
     loadAll();
+    loadVendorSkus();
     api.get('/sku-types').then(setTypes);
-    api.get('/terminal-parent-skus').then(setParents);
     api.get('/vendors').then(setVendors);
   }, []);
 
-  // Refresh allSkus and parents when the modal opens so freshly created prerequisites show up
+  // Refresh pickers when the modal opens so freshly created prerequisites
+  // (component SKUs, vendor SKUs) show up.
   useEffect(() => {
     if (edit) {
       loadAll();
-      api.get('/terminal-parent-skus').then(setParents);
+      loadVendorSkus();
     }
   }, [edit?.sku_id, edit?.sku_type_id]);
 
@@ -67,27 +58,40 @@ export default function Skus() {
   const requiresSerial = !!selectedType?.serial_eligible;
 
   // When the user picks (or switches to) a serial-eligible type, force STM=Serial.
-  // When they pick a non-serial-eligible type, force STM=None. Keeps the form coherent.
+  // When they pick a non-serial-eligible type, force STM=None. Also drop any
+  // vendor SKU picks since they belong to the previous SKU Type.
   useEffect(() => {
     if (!edit || !selectedType) return;
     const desired = selectedType.serial_eligible ? 'Serial' : 'None';
+    const isCreate = !edit.sku_id;
+    // SKU Type is immutable on Modify, so the only case where prior vendor_sku_ids
+    // belong to a different type is during Create when the user re-picks the type.
     if (edit.stm !== desired) {
-      setEdit((prev) => ({ ...prev, stm: desired }));
+      setEdit((prev) => ({ ...prev, stm: desired, ...(isCreate ? { vendor_sku_ids: [] } : {}) }));
+    } else if (isCreate && edit.vendor_sku_ids && edit.vendor_sku_ids.length) {
+      setEdit((prev) => ({ ...prev, vendor_sku_ids: [] }));
     }
   }, [selectedType?.sku_type_id]);
   const adaptorType = types.find((t) => t.name === 'Adaptors');
   const usbType = types.find((t) => t.name === 'USB cables');
   const adaptorSkus = useMemo(() => allSkus.filter((s) => s.sku_type_id === adaptorType?.sku_type_id), [allSkus, adaptorType]);
   const usbSkus     = useMemo(() => allSkus.filter((s) => s.sku_type_id === usbType?.sku_type_id),     [allSkus, usbType]);
+  // Vendor SKUs of the same SKU Type — offered as a multi-select on create.
+  const categoryVendorSkus = useMemo(
+    () => (selectedType ? vendorSkus.filter((vs) => vs.sku_type_id === selectedType.sku_type_id) : []),
+    [vendorSkus, selectedType]
+  );
 
-  const doRestore = async (s) => {
+  const toggleStatus = async (s) => {
+    const next = s.status === 'Active' ? 'Inactive' : 'Active';
+    if (!confirm(`Mark ${s.sku_name} as ${next}?`)) return;
     try {
-      await api.post(`/skus/${s.sku_id}/restore`);
-      toast.push(`Restored ${s.sku_name} — still Inactive; toggle status to activate.`, 'success');
+      await api.post(`/skus/${s.sku_id}/status`);
+      toast.push(`${s.sku_name} marked ${next}`, 'success');
       loadFiltered();
       loadAll();
     } catch (e) {
-      toast.push(e.data?.error || e.message || 'Restore failed', 'error');
+      toast.push(e.data?.error || e.message || 'Status change failed', 'error');
     }
   };
 
@@ -95,7 +99,7 @@ export default function Skus() {
     setErrors({});
     try {
       const payload = { ...edit };
-      ['sku_id','sku_number','created_at','updated_at','deleted_at','sku_type_name','serial_eligible','status','specifications_pdf'].forEach(k => delete payload[k]);
+      ['sku_id','sku_number','created_at','updated_at','deleted_at','sku_type_name','serial_eligible','status','specifications_pdf','vendor_count'].forEach(k => delete payload[k]);
       Object.keys(payload).forEach((k) => { if (payload[k] === '') delete payload[k]; });
       if (edit.sku_id) await api.patch(`/skus/${edit.sku_id}`, payload);
       else await api.post('/skus', payload);
@@ -123,8 +127,8 @@ export default function Skus() {
   return (
     <>
       <div className="page-header">
-        <h2>Manage SKUs</h2>
-        <button className="primary" onClick={startNew}>+ Add SKU</button>
+        <h2>Manage Innoviti SKUs</h2>
+        <button className="primary" onClick={startNew}>+ Add Innoviti SKU</button>
       </div>
       <div className="filter-bar">
         <select value={filter.sku_type_id} onChange={(e) => setFilter({ ...filter, sku_type_id: e.target.value })}>
@@ -142,34 +146,34 @@ export default function Skus() {
             </option>
           ))}
         </select>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-          <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
-          Show deleted
-        </label>
       </div>
       <div className="card table-wrap">
-        <table>
-          <thead><tr><th>INN</th><th>Name</th><th>SKU Type</th><th>Tracking</th><th>Suppliers</th><th>Status</th><th></th></tr></thead>
+        <table className="card-table">
+          <thead><tr><th>INN</th><th>Name</th><th>SKU Type</th><th>Tracking</th><th>Vendor count</th><th>Status</th><th></th></tr></thead>
           <tbody>
             {skus.map((s) => {
-              const deleted = !!s.deleted_at;
+              const vendorCount = Number.isFinite(s.vendor_count) ? s.vendor_count : 0;
               return (
-                <tr key={s.sku_id} style={deleted ? { opacity: 0.55 } : undefined}>
-                  <td>{s.sku_number}</td>
-                  <td>
+                <tr key={s.sku_id}>
+                  <td data-label="INN">{s.sku_number}</td>
+                  <td data-label="Name">
                     <Link to={`/skus/${s.sku_id}`}>{s.sku_name}</Link>
-                    {deleted && <span className="badge inactive" style={{ marginLeft: 6 }}>Deleted</span>}
                   </td>
-                  <td>{s.sku_type_name}</td>
-                  <td>{s.stm === 'Serial' ? 'Serial #' : 'Untracked'}</td>
-                  <td>
-                    <Link to={`/skus/${s.sku_id}`}>
-                      {supplierCounts[s.sku_id] ?? '…'}
-                    </Link>
-                    {supplierCounts[s.sku_id] === 0 && <span style={{ color: '#a15c00', marginLeft: 4 }}>⚠</span>}
+                  <td data-label="SKU Type">{s.sku_type_name}</td>
+                  <td data-label="Tracking">{s.stm === 'Serial' ? 'Serial #' : 'Untracked'}</td>
+                  <td data-label="Vendor count">
+                    {vendorCount}
+                    {vendorCount === 0 && <span style={{ color: '#a15c00', marginLeft: 4 }}>⚠</span>}
                   </td>
-                  <td><span className={`badge ${s.status === 'Active' ? 'active' : 'inactive'}`}>{s.status}</span></td>
-                  <td>{deleted ? <button onClick={() => doRestore(s)}>Restore</button> : <button onClick={() => setEdit(s)}>Modify</button>}</td>
+                  <td data-label="Status"><span className={`badge ${s.status === 'Active' ? 'active' : 'inactive'}`}>{s.status}</span></td>
+                  <td data-label="Actions" className="actions-cell">
+                    <div className="row-actions">
+                      <button onClick={() => setEdit(s)}>Modify</button>
+                      <button onClick={() => toggleStatus(s)}>
+                        {s.status === 'Active' ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -179,7 +183,7 @@ export default function Skus() {
 
       {edit && (
         <Modal
-          title={edit.sku_id ? `Modify ${edit.sku_number}` : 'Add SKU'}
+          title={edit.sku_id ? `Modify ${edit.sku_number}` : 'Add Innoviti SKU'}
           onClose={closeEdit}
           actions={<><button onClick={closeEdit}>Cancel</button><button className="primary" onClick={save}>Save</button></>}
         >
@@ -319,19 +323,50 @@ export default function Skus() {
                   </div>
                 )}
               </div>
-              <div className="full">
-                <label>Terminal Parent SKU *</label>
-                <select value={edit.parent_sku_id || ''} onChange={(e) => setEdit({ ...edit, parent_sku_id: Number(e.target.value) })}>
-                  <option value="">Pick…</option>
-                  {parents.map((p) => <option key={p.parent_sku_id} value={p.parent_sku_id}>{p.name}</option>)}
-                </select>
-                {parents.length === 0 && <div className="error-text">No Terminal Parent SKUs exist — create one first.</div>}
-              </div>
             </>}
 
+            {selectedType && (
+              <div className={`full ${fieldClass('vendor_sku_ids')}`}>
+                <label>Vendor SKUs <span className="muted" style={{ fontSize: 11 }}>· optional · same SKU Type · editable after creation</span></label>
+                {categoryVendorSkus.length === 0 ? (
+                  <div className="help-text">
+                    No vendor SKUs of type "{selectedType.name}" yet — you can create them later on the
+                    <b> Vendor SKUs</b> screen. The Innoviti SKU can still be saved without one.
+                  </div>
+                ) : (
+                  <div className="check-list">
+                    {categoryVendorSkus.map((vs) => {
+                      const checked = (edit.vendor_sku_ids || []).includes(vs.vendor_sku_id);
+                      return (
+                        <label key={vs.vendor_sku_id} className={`check-item${checked ? ' checked' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              const cur = new Set(edit.vendor_sku_ids || []);
+                              if (e.target.checked) cur.add(vs.vendor_sku_id); else cur.delete(vs.vendor_sku_id);
+                              setEdit({ ...edit, vendor_sku_ids: Array.from(cur) });
+                            }}
+                          />
+                          <span>{vs.vendor_sku_number}{vs.vendor_sku_name ? ` — ${vs.vendor_sku_name}` : ''}</span>
+                          <span className="muted mono-id" style={{ marginLeft: 'auto' }}>{vs.vendor_name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                {fieldError('vendor_sku_ids') && <div className="error-text">{fieldError('vendor_sku_ids')}</div>}
+                <div className="help-text">
+                  Optional. {edit.sku_id
+                    ? 'Tick or untick to change which Vendor SKUs supply this Innoviti SKU. The default supplier is preserved when still ticked; otherwise the first remaining link becomes the default.'
+                    : 'The first vendor SKU ticked becomes the default supplier. You can revise this set later by Modifying the Innoviti SKU.'}
+                </div>
+              </div>
+            )}
+
             <div className="full help-text">
-              Vendors, vendor SKU #s, pricing, and vendor spec PDFs are managed on the
-              <b> Vendor SKUs</b> screen (or per-SKU from the SKU detail page).
+              Vendor SKU numbers, pricing, and vendor spec PDFs are managed on the
+              <b> Vendor SKUs</b> screen.
             </div>
           </div>
         </Modal>

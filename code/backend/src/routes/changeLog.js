@@ -4,6 +4,25 @@ import { requireAuth, requireAdminRead } from '../lib/auth.js';
 
 const router = Router();
 
+/**
+ * Attach a human-readable `object_label` to every change-log row of a given
+ * object_type. `fetchLabels` receives the numeric ids and returns a
+ * Map<string id, string label>.
+ */
+async function enrichLabels(rows, objectType, fetchLabels) {
+  const ids = rows
+    .filter((r) => r.object_type === objectType && /^\d+$/.test(String(r.object_id)))
+    .map((r) => Number(r.object_id));
+  if (!ids.length) return;
+  const byId = await fetchLabels(ids);
+  for (const r of rows) {
+    if (r.object_type === objectType) {
+      const label = byId.get(String(r.object_id));
+      if (label) r.object_label = label;
+    }
+  }
+}
+
 router.get('/', requireAuth, requireAdminRead, async (req, res, next) => {
   try {
     const { object_type, object_id, actor_user_id, since, until, limit = 200 } = req.query;
@@ -19,27 +38,34 @@ router.get('/', requireAuth, requireAdminRead, async (req, res, next) => {
       where.length ? 'WHERE ' + where.join(' AND ') : ''
     } ORDER BY occurred_at DESC LIMIT $${params.length}`;
     const rows = await many(sql, params);
-    // Enrich SKUVendorAssociation rows with a human-readable label "INN-### / Vendor"
-    const assocIds = rows
-      .filter((r) => r.object_type === 'SKUVendorAssociation' && /^\d+$/.test(String(r.object_id)))
-      .map((r) => Number(r.object_id));
-    if (assocIds.length) {
-      const assocs = await many(
-        `SELECT a.sku_vendor_assoc_id, s.sku_number, v.company_name
-           FROM sku_vendor_assocs a
-           JOIN skus s ON s.sku_id = a.sku_id
-           JOIN vendors v ON v.vendor_id = a.vendor_id
-          WHERE a.sku_vendor_assoc_id = ANY($1::int[])`,
-        [assocIds]
+
+    // Vendor SKU — "vendor SKU # / Vendor".
+    await enrichLabels(rows, 'VendorSku', async (ids) => {
+      const vskus = await many(
+        `SELECT vs.vendor_sku_id, vs.vendor_sku_number, v.company_name
+           FROM vendor_skus vs JOIN vendors v ON v.vendor_id = vs.vendor_id
+          WHERE vs.vendor_sku_id = ANY($1::int[])`,
+        [ids]
       );
-      const byId = new Map(assocs.map((a) => [String(a.sku_vendor_assoc_id), `${a.sku_number} / ${a.company_name}`]));
-      for (const r of rows) {
-        if (r.object_type === 'SKUVendorAssociation') {
-          const label = byId.get(String(r.object_id));
-          if (label) r.object_label = label;
-        }
-      }
-    }
+      return new Map(vskus.map((x) => [String(x.vendor_sku_id), `${x.vendor_sku_number} / ${x.company_name}`]));
+    });
+
+    // Innoviti SKU ↔ Vendor SKU link — "INN-### ↔ vendor SKU #".
+    await enrichLabels(rows, 'SkuVendorLink', async (ids) => {
+      const links = await many(
+        `SELECT l.sku_vendor_link_id, s.sku_number, vs.vendor_sku_number
+           FROM sku_vendor_links l
+           JOIN skus s ON s.sku_id = l.sku_id
+           JOIN vendor_skus vs ON vs.vendor_sku_id = l.vendor_sku_id
+          WHERE l.sku_vendor_link_id = ANY($1::int[])`,
+        [ids]
+      );
+      return new Map(links.map((x) => [String(x.sku_vendor_link_id), `${x.sku_number} ↔ ${x.vendor_sku_number}`]));
+    });
+
+    // Pre-many-to-many 'SKUVendorAssociation' entries keep their raw object_id
+    // label — the legacy sku_vendor_assocs table they pointed at is gone.
+
     res.json(rows);
   } catch (e) { next(e); }
 });

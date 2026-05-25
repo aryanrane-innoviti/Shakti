@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
+import GlobalLoader from './GlobalLoader.jsx';
 
 /**
  * Role-aware navigation:
- *   SA    → User Types + Backups (+ Users per product decision)
+ *   SA    → Users, Vendors/Locations/SKUs (view), User Types + Backups
  *   ADMIN → every operational object + Change Log
  *
  * Anything outside the role's scope is hidden from the sidebar entirely;
@@ -15,6 +16,10 @@ const NAV = {
     { to: '/dashboard',  label: 'Dashboard' },
     { section: 'People' },
     { to: '/users',      label: 'Users' },
+    { section: 'Operations' },
+    { to: '/vendors',    label: 'Vendors' },
+    { to: '/locations',  label: 'Locations' },
+    { to: '/skus',       label: 'Innoviti SKUs' },
     { section: 'Governance' },
     { to: '/user-types', label: 'User Types' },
     { to: '/backups',    label: 'Backups' },
@@ -27,11 +32,13 @@ const NAV = {
     { to: '/vendors',   label: 'Vendors' },
     { to: '/locations', label: 'Locations' },
     { section: 'Catalog' },
-    { to: '/skus',                 label: 'SKUs' },
+    { to: '/skus',                 label: 'Innoviti SKUs' },
     { to: '/vendor-skus',          label: 'Vendor SKUs' },
-    { to: '/terminal-parent-skus', label: 'Terminal Parent SKUs' },
     { to: '/sku-types',            label: 'SKU Types' },
     { to: '/vendor-types',         label: 'Vendor Types' },
+    { section: 'Stock' },
+    { to: '/load-stock', label: 'Load Stock' },
+    { to: '/stock',      label: 'View Stock' },
     { section: 'Audit' },
     { to: '/change-log', label: 'Change Log' },
   ],
@@ -75,6 +82,7 @@ export default function Layout() {
       <aside className={`sidebar${mobileOpen ? ' open' : ''}`}>
         <h1 className="brand">Shakti<span className="dot">.</span></h1>
         <p className="brand-sub">Supply Chain Ops</p>
+        <p className="brand-version">v{__APP_VERSION__}</p>
 
         {items.map((item, i) =>
           item.section ? (
@@ -108,6 +116,7 @@ export default function Layout() {
       />
 
       <main className="main">
+        <GlobalLoader />
         <Outlet />
       </main>
     </div>

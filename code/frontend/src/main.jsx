@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth.jsx';
 import { ToastProvider } from './lib/toast.jsx';
 import Layout from './components/Layout.jsx';
+import GlobalLoader from './components/GlobalLoader.jsx';
 
 import Login          from './pages/Login.jsx';
 import Reset          from './pages/Reset.jsx';
@@ -16,13 +17,14 @@ import Locations      from './pages/Locations.jsx';
 import Skus           from './pages/Skus.jsx';
 import SkuDetail      from './pages/SkuDetail.jsx';
 import VendorSkus     from './pages/VendorSkus.jsx';
-import TerminalParentSkus from './pages/TerminalParentSkus.jsx';
 import Dashboard     from './pages/Dashboard.jsx';
 import UserTypes      from './pages/UserTypes.jsx';
 import VendorTypes    from './pages/VendorTypes.jsx';
 import SkuTypes       from './pages/SkuTypes.jsx';
 import ChangeLog      from './pages/ChangeLog.jsx';
 import Backups        from './pages/Backups.jsx';
+import LoadStock      from './pages/LoadStock.jsx';
+import Stock          from './pages/Stock.jsx';
 
 import './styles.css';
 
@@ -32,7 +34,7 @@ function HomeRedirect() {
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ padding: 32 }}>Loading…</div>;
+  if (loading) return <GlobalLoader force />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.initial_setup_required) return <Navigate to="/setup" replace />;
   return children;
@@ -40,7 +42,7 @@ function Protected({ children }) {
 
 function SetupGate({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div style={{ padding: 32 }}>Loading…</div>;
+  if (loading) return <GlobalLoader force />;
   if (!user) return <Navigate to="/login" replace />;
   if (!user.initial_setup_required) return <HomeRedirect />;
   return children;
@@ -77,16 +79,19 @@ function App() {
             {/* ADMIN scope */}
             <Route path="users"               element={<RoleGate allow={['SA', 'ADMIN']}><Users /></RoleGate>} />
             <Route path="contacts"            element={<RoleGate allow={['ADMIN']}><Contacts /></RoleGate>} />
-            <Route path="vendors"             element={<RoleGate allow={['ADMIN']}><Vendors /></RoleGate>} />
-            <Route path="vendors/:id"         element={<RoleGate allow={['ADMIN']}><VendorDetail /></RoleGate>} />
-            <Route path="locations"           element={<RoleGate allow={['ADMIN']}><Locations /></RoleGate>} />
-            <Route path="skus"                element={<RoleGate allow={['ADMIN']}><Skus /></RoleGate>} />
-            <Route path="skus/:id"            element={<RoleGate allow={['ADMIN']}><SkuDetail /></RoleGate>} />
+            <Route path="vendors"             element={<RoleGate allow={['SA', 'ADMIN']}><Vendors /></RoleGate>} />
+            <Route path="vendors/:id"         element={<RoleGate allow={['SA', 'ADMIN']}><VendorDetail /></RoleGate>} />
+            <Route path="locations"           element={<RoleGate allow={['SA', 'ADMIN']}><Locations /></RoleGate>} />
+            <Route path="skus"                element={<RoleGate allow={['SA', 'ADMIN']}><Skus /></RoleGate>} />
+            <Route path="skus/:id"            element={<RoleGate allow={['SA', 'ADMIN']}><SkuDetail /></RoleGate>} />
             <Route path="vendor-skus"         element={<RoleGate allow={['ADMIN']}><VendorSkus /></RoleGate>} />
-            <Route path="terminal-parent-skus" element={<RoleGate allow={['ADMIN']}><TerminalParentSkus /></RoleGate>} />
             <Route path="vendor-types"        element={<RoleGate allow={['ADMIN']}><VendorTypes /></RoleGate>} />
             <Route path="sku-types"           element={<RoleGate allow={['ADMIN']}><SkuTypes /></RoleGate>} />
             <Route path="change-log"          element={<RoleGate allow={['ADMIN']}><ChangeLog /></RoleGate>} />
+
+            {/* Phase 2 — Load Stock (ADMIN only) */}
+            <Route path="load-stock"          element={<RoleGate allow={['ADMIN']}><LoadStock /></RoleGate>} />
+            <Route path="stock"               element={<RoleGate allow={['ADMIN']}><Stock /></RoleGate>} />
           </Route>
 
           <Route path="*" element={<HomeRedirect />} />

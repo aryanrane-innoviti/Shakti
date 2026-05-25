@@ -178,7 +178,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
       users: await many(`SELECT user_id, user_index FROM users WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
       contacts: await many(`SELECT contact_id, contact_index FROM contacts WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
       locations: await many(`SELECT location_id, location_index FROM locations WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
-      sku_assocs: await many(`SELECT sku_vendor_assoc_id FROM sku_vendor_assocs WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
+      vendor_skus: await many(`SELECT vendor_sku_id FROM vendor_skus WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
     };
     const hasAny = Object.values(dependents).some((arr) => arr.length > 0);
     if (hasAny) return res.status(409).json({ error: 'has_dependents', dependents });

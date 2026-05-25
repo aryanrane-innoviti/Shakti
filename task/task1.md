@@ -1,5 +1,4 @@
 # Shakti Supply Chain Management System — Implementation Tasks
-
 ## How to read this document
 
 
@@ -44,9 +43,8 @@ These rules apply to every other work package. Implement them once; reuse everyw
 **API endpoints**
 - `POST /auth/login` — username + password → session token.
 - `POST /auth/logout` — invalidate current session.
-- `POST /auth/password-reset/request` — SA/Admin-initiated; generates single-use token tied to a target user.
 - `POST /auth/password-reset/consume` — target user submits token + new password.
-- `GET  /auth/password-reset/url/{user_id}` — returns the reset URL string for **copy-to-clipboard** by SA/Admin (no automated email is sent).
+- Reset URL issuance is **per-user** and lives under the Users routes: `POST /users/{id}/password-reset-url` (SA/Admin only; see §3). The response is a copy-to-clipboard URL — no automated email is sent.
 
 **Validation rules**
 - Password reset token: single-use, **24h expiry**, invalidated immediately on consumption.
@@ -97,8 +95,8 @@ These rules apply to every other work package. Implement them once; reuse everyw
 - In case a pincode returns multiple cities, provide a dropdown for the user to pick the correct one.
 - If the third-party lookup **fails or is unreachable**, the form **blocks submission** until City/State are resolved. A retry affordance is offered; the form cannot be saved without successful resolution.
 
-### 1.10 Change log (see §11)
-Every Section 1 object writes a **minimal** change-log entry on create/update/delete/status-toggle/upload (see Work Package 11 for the reduced schema and endpoints). The log captures only: object, actor, action, timestamp — no per-field old→new diff.
+### 1.10 Change log (see §10)
+Every Section 1 object writes a **minimal** change-log entry on create/update/delete/status-toggle/upload (see Work Package 10 for the reduced schema and endpoints). The log captures only: object, actor, action, timestamp — no per-field old→new diff.
 
 ### 1.11 Authorization summary for Section 1
 - **SA**: full CRUD on every Section 1 objects Not on User Types , only create and read is applicable.
@@ -139,7 +137,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - Operational user types (ASO/STU/ALU/RLU/FNU/LOU and any SA-created types in this phase) **have no Section 1 access**. They are reserved for later-phase modules.
 
 ### UI surface
-- **Manage User Types** screen (SA only): list of all types with inline rename for non-immutable rows, plus an "Add User Type" button.
+- **Manage User Types** screen: SA can edit (inline rename for non-immutable rows, plus an "Add User Type" button); Admin can read the list but every Modify affordance is disabled with a tooltip indicating SA-only edit access. Operational user types do not see the screen.
 
 ### Cross-object dependencies
 - All Types have to have some seed value before objects which refer to them are created.
@@ -161,7 +159,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `mobile` (string, **optional**; if provided, exactly 10 digits, no country prefix, matches `^[6-9]\d{9}$`).
 - `vendor_id` (FK → Vendors, **required**; defaults to the Innoviti vendor for every user type **except** `RLU` and `LOU`; **fully editable**).
 - `employee_id` (string, conditional — see validation; format `IC/NNNN` or `INN/NNNN`, regex `^(IC|INN)/\d{4}$`).
-- `address_line_1` (string).
+- `address_line_1` (string, **optional**).
 - `address_line_2` (string, optional).
 - `pincode` (string, 6 digits).
 - `city` (string, derived from pincode at form-fill).
@@ -210,7 +208,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - Creating a non-Innoviti user without Employee ID succeeds; creating an Innoviti user without Employee ID returns 422.
 - Two users cannot share the same email.
 - Deleting a user sets Status=Inactive; the user appears in historical reports but is denied login.
-- Reactivating an Inactive user triggers a password reset email/token.
+- Reactivating an Inactive user issues a fresh single-use 24h reset URL, surfaced via copy-to-clipboard. The prior password no longer works.
 
 ---
 
@@ -318,7 +316,6 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
   - `city` (derived from pincode).
   - `state` (derived from pincode).
 - `status` (enum: `Active`, `Inactive`; default `Active`).
-- `Contact_Link` (refers to the contacts associated).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 
@@ -331,7 +328,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `GET    /vendors/{id}/contacts` — list all Contacts whose `vendor_id` matches.
 - `GET    /vendors` — list, filterable by `status`, `vendor_type_id`.
 - `PATCH  /vendors/{id}` — update.
-- `DELETE /vendors/{id}` — **soft delete**, but **blocked** with 409 if any dependent record exists (Contacts, Users, Inventory Locations, primary or association-row SKU references). SA must toggle Status=Inactive instead.
+- `DELETE /vendors/{id}` — **soft delete**, but **blocked** with 409 if any dependent record exists (Contacts, Users, Inventory Locations, Vendor SKUs owned by this vendor). SA must toggle Status=Inactive instead.
 - `POST   /vendors/{id}/status` — toggle Active/Inactive (SA or Admin).
 
 ### Validation rules
@@ -343,20 +340,20 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### Business rules / invariants
 - The seeded Innoviti vendor cannot be hard-deleted under any condition.
-- **Inactive vendors remain visible in every picker** (Users vendor dropdown, Contacts vendor dropdown, Locations vendor dropdown, SKU association dropdown) and on every detail page, **annotated with an "(Inactive)" badge** next to the company name. They can still be selected for new associations; the badge is the only signal of their status.
+- **Inactive vendors remain visible in every picker** (Users vendor dropdown, Contacts vendor dropdown, Locations vendor dropdown, Vendor SKU vendor dropdown) and on every detail page, **annotated with an "(Inactive)" badge** next to the company name. They can still be selected for new associations; the badge is the only signal of their status.
 - Hard delete is **never** offered; the DELETE endpoint performs soft delete only when no dependents exist, otherwise responds 409.
 
 ### UI surface
 - **Manage Vendors** screen with filter chips for Status and Vendor Type.
 - **Add / Modify Vendor form**: company info, vendor type picker, GST field (hidden / not required for the Innoviti default row only), the registered-office sub-address block visually separated from the operational address block, status toggle.
-- **Vendor detail page**: header with company info; a **Contact Persons** hyperlink that navigates to a list of Contacts whose `vendor_id` matches; lists of associated Users, Locations, and SKUs.
+- **Vendor detail page**: header with company info; a **Contact Persons** hyperlink that navigates to a list of Contacts whose `vendor_id` matches; lists of associated Users, Locations, and Vendor SKUs owned by this vendor.
 
 ### Cross-object dependencies
 - Vendor Types must exist.
 
 ### Acceptance
 - Creating a non-Innoviti vendor without GST returns 422.
-- DELETE on a vendor that has any Contact / User / Location / SKU reference returns 409 with the dependency list.
+- DELETE on a vendor that has any Contact / User / Location / Vendor SKU reference returns 409 with the dependency list.
 - An Inactive vendor still appears on the User detail page of a user previously tagged to it.
 - Clicking the Contact Persons hyperlink lists exactly the Contacts whose `vendor_id` matches.
 
@@ -366,7 +363,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### Fields & types
 - `sku_type_id` (auto, internal).
-- `name` (string, **required**, unique, 1–60 chars).
+- `name` (string, **required**, unique, 1–50 chars).
 - `serial_eligible` (boolean) — controls whether SKUs of this type may have STM=Serial.
 - `is_seed` (boolean).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
@@ -399,7 +396,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### Business rules / invariants
 - **Nothing is hardcoded** about which SKU Type can have STM=Serial. The `serial_eligible` flag is the single source of truth. STM=Serial on an SKU is allowed **only if** the SKU's type has `serial_eligible = true` at the moment of SKU save/update.
-- Adaptor / USB / Parent SKU pickers on Payment Terminal SKUs rely on the existence of SKU Types literally named `Adaptors` and `USB cables`, plus the Terminal Parent SKU object. If a Payment Terminal SKU is created with no candidate Adaptor/USB/Parent SKU rows present, the save is blocked (see SKU §8).
+- Adaptor / USB SKU pickers on Payment Terminal SKUs rely on the existence of SKU Types literally named `Adaptors` and `USB cables`. If a Payment Terminal SKU is created with no candidate Adaptor/USB SKU rows present, the save is blocked (see SKU §8).
 
 ### UI surface
 - **Manage SKU Types** screen under Admin's "Modify Object Types" tab: list with inline rename and a **read-only** `serial_eligible` indicator. "Add SKU Type" button. The `serial_eligible` flag is set only on the Add form and cannot be toggled on existing rows. **No delete affordance is rendered** — SKU types are permanent.
@@ -409,8 +406,8 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### Acceptance
 - Creating an SKU of a type whose `serial_eligible` is false with STM=Serial returns 422.
-- Payment Terminal SKUs will always be thtough Serial Number.
-- A soft-deleted SKU Type no longer appears in the SKU creation picker, but existing SKUs of that type still load.
+- Payment Terminal SKUs will always be through Serial Number.
+- SKU Types cannot be deleted — no DELETE endpoint exists, and the SKU creation picker always shows every SKU Type that has ever been created.
 
 ---
 
@@ -424,142 +421,182 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `description` (string, free text).
 - `stm` (enum: `Serial`, `None`, **required**).
 - `sku_type_id` (FK → SKU Types, **required**, **immutable after creation**).
-- `specifications_pdf` (file ref → object storage; PDF, **≤10 MB**; **latest version only** — a new upload overwrites the previous file).
-- `approx_price_moq` (integer ≥1) and `approx_price_unit` (decimal, ≥0) — together represent Approximate price per unit (MOQ + unit price).
+- `specifications_pdf` (file ref → object storage; **optional**; PDF, **≤10 MB**; **latest version only** — a new upload overwrites the previous file).
+- `approx_price_moq` (integer ≥1, **optional**) and `approx_price_unit` (decimal, ≥0, **optional**) — together represent Approximate price per unit (MOQ + unit price). Either may be null at create time.
 - `status` (enum: `Active`, `Inactive`; default `Active`).
 - **Conditional, only when `sku_type_id` resolves to "Payment Terminal":**
   - `adaptor_sku_ids` (array of FK → SKU where type=Adaptors, **required, non-empty**, multi-select).
   - `usb_cable_sku_ids` (array of FK → SKU where type=USB cables, **required, non-empty**, multi-select).
-  - `parent_sku_id` (FK → Terminal Parent SKU, **required**).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
+
+#### Relationships — Innoviti SKU ↔ Vendor SKU mapping
+An Innoviti SKU may map to zero or more **Vendor SKUs** (§8.3.a) through the **`sku_vendor_links`** many-to-many table (§8.3.b). The mapping records "which Vendor SKU(s) supply this Innoviti SKU". Users mutate the set only via the Innoviti SKU Create and Modify forms — there is no stand-alone link-management screen and no dedicated `/skus/{sku_id}/vendor-skus` REST surface.
+
+- **Cardinality.** One Innoviti SKU → zero-to-many Vendor SKUs; one Vendor SKU → zero-to-many Innoviti SKUs. Both sides must share the **same `sku_type_id`** for a link to be accepted.
+- **Optional at create and modify.** An Innoviti SKU is created first and may exist with zero links (the matching Vendor SKU may not exist yet). Both `POST /skus` and `PATCH /skus/{id}` accept an optional `vendor_sku_ids` array; an empty/omitted array is fine. PATCH reconciles the link set: ids not currently linked are inserted, links no longer in the array are soft-deleted, the rest are left untouched — all in one transaction.
+- **Default supplier.** Exactly one link per Innoviti SKU may carry `is_default = true`. On create, the first id supplied becomes the default. On PATCH the existing default is preserved when still in the supplied set; if it was removed, the first remaining link (by `sku_vendor_link_id`) is auto-promoted. If the new set is empty, the SKU has no default until the next PATCH supplies one.
+- **Persistence.** The Innoviti SKU itself (the `skus` row) carries **no** vendor / vendor SKU columns; everything lives in `sku_vendor_links`. `vendor_sku_ids` is a transient payload field plus a read-only convenience array on `GET /skus` / `GET /skus/{id}` (so the Modify form can pre-populate).
+- **Lifecycle.** Inserts happen only inside `POST /skus` or `PATCH /skus/{id}`; soft-deletes happen inside `PATCH /skus/{id}` (reconciliation) or cascade from `DELETE /vendor-skus/{id}` (§8.3.a). There are no standalone `/skus/{sku_id}/vendor-skus/...` routes for any role.
+- **Phase 2 dependency.** The Payment Terminal and Base Station load journeys walk this mapping in reverse: a row's `(owner, vendor_sku_number)` resolves to a Vendor SKU, then `sku_vendor_links` resolves to the Innoviti SKU whose `sku_id` is stamped on the master row (see task2.md §6.5). If an Innoviti SKU has no live link to a needed Vendor SKU, PT/BS loads will fail with `vendor_sku_not_found` until the link is added via a Modify.
 
 #### API endpoints
 - `POST   /skus` — create (SA or Admin).
-- `GET    /skus/{id}` — read one (includes association list).
-- `GET    /skus` — list, filterable by `sku_type_id`, `status`, `vendor_id` (matches primary OR any association).
+- `GET    /skus/{id}` — read one (includes the list of linked Vendor SKUs with their `is_default` flag).
+- `GET    /skus` — list, filterable by `sku_type_id`, `status`, `vendor_id` (matches Innoviti SKUs linked through any non-deleted Vendor SKU owned by the given vendor).
 - `PATCH  /skus/{id}` — update; `sku_type_id` is rejected if changed.
 - `DELETE /skus/{id}` — **soft delete** (sets `status = Inactive` and `deleted_at`).
 - `POST   /skus/{id}/status` — toggle Active/Inactive (SA or Admin).
 - `POST   /skus/{id}/specifications` — upload a new specifications PDF (≤10 MB). **Overwrites** the existing file; previous file is not retained.
 
 #### Validation rules
+- `sku_name`: must be **unique (case-insensitive) within its SKU Type** among non-deleted SKUs. Creating — or renaming — a SKU to a name already used by another SKU of the same type is rejected. Enforced both in the API and by a partial unique index `(LOWER(sku_name), sku_type_id) WHERE deleted_at IS NULL`. The same name **is** allowed under a different SKU Type.
 - `sku_type_id`: required at create, **immutable on update**. Attempting to change returns 422.
 - `stm` is **fully determined by the SKU type**:
   - If the SKU Type's `serial_eligible` is **true** (Payment Terminal, Base Station, SIM Card, or any custom serial-eligible type), `stm` **must be `Serial`** — `None` is rejected with 422.
   - If `serial_eligible` is **false**, `stm` must be `None` — `Serial` is rejected with 422.
   - The UI locks the STM dropdown the moment a type is picked and auto-sets the correct value, so the field can never be wrong from the form.
 - `specifications_pdf`: MIME must be `application/pdf`; size ≤ **10 MB**.
-- Payment Terminal save **fails with 422** if any of `adaptor_sku_ids`, `usb_cable_sku_ids`, `parent_sku_id` cannot be resolved to at least one candidate row (i.e., no Adaptor SKUs exist, no USB cable SKUs exist, or no Terminal Parent SKU exists). The error response instructs the user to create the prerequisite records first.
+- Payment Terminal save **fails with 422** if either `adaptor_sku_ids` or `usb_cable_sku_ids` cannot be resolved to at least one candidate row (i.e., no Adaptor SKUs exist, or no USB cable SKUs exist). The error response instructs the user to create the prerequisite records first.
+- `vendor_sku_ids`: **optional** on both `POST /skus` (create) and `PATCH /skus/{id}` (modify). An Innoviti SKU is created first and may have **zero** Vendor SKUs at create time (the matching Vendor SKU may not exist yet); the link set can be revised later by re-submitting `vendor_sku_ids` on PATCH. If supplied, every referenced Vendor SKU must (a) exist, (b) be non-deleted, and (c) have the **same `sku_type_id`** as the Innoviti SKU — otherwise 422. On create, the first id supplied becomes the default supplier. On PATCH the existing default is preserved when still in the set; if removed, the first remaining link is auto-promoted. See §8.3.b for the link semantics.
 
 #### Business rules / invariants
 - **SKU Type is immutable.** To change type, create a new SKU.
 - **PDF storage**: object storage, **latest version only** (new uploads overwrite the previous file), **10 MB cap** per file.
-- Setting an Adaptor / USB / Parent SKU referenced by an Active Payment Terminal SKU to Inactive is **allowed**, but:
+- Setting an Adaptor / USB SKU referenced by an Active Payment Terminal SKU to Inactive is **allowed**, but:
   - The deactivation flow shows a warning listing the dependent Payment Terminal SKUs.
   - The dependent Payment Terminal SKU's detail page **highlights the stale reference in red**.
 - Soft delete is reversible by toggling Status back to Active (subject to the standard role gating).
 
 #### UI surface
 - **Manage SKUs** screen with filters for Type, Status, Vendor.
-- **Add / Modify SKU form** — Payment Terminal type **reveals** the Adaptor / USB / Parent multi-select widgets; other types hide them.
-- **Vendor SKU pop-up modal inside SKU View** — shows the full grid of vendor-SKU associations (all peers; no primary distinction) for the Innoviti SKU, status toggle, dependent-reference warnings highlighted in red.
+- **Add Innoviti SKU form** — Payment Terminal type **reveals** the Adaptor / USB multi-select widgets; other types hide them. A "Vendor SKUs (optional)" multi-select is shown for every SKU Type **only after the SKU Type has been picked**; the list is filtered to non-deleted Vendor SKUs whose `sku_type_id` matches the picked SKU Type, and switching the SKU Type clears any prior picks. If no Vendor SKUs of the picked SKU Type exist, the section displays a soft hint ("No vendor SKUs of this type yet — you can create them later on Manage Vendor SKU; the Innoviti SKU can still be saved without one") and the user proceeds with zero picks.
+- **Modify Innoviti SKU form** — same fields editable as today, plus the same "Vendor SKUs (optional)" multi-select that appears on Create. It is pre-populated with the currently-linked Vendor SKUs (from `GET /skus/{id}.vendor_sku_ids`), and the user may tick/untick any to revise the link set. Submitting reconciles `sku_vendor_links` (additions inserted, removals soft-deleted) inside the PATCH transaction. SKU Type is immutable, so the multi-select stays filtered to the same SKU Type as at create.
+- **Innoviti SKU detail page** — header with SKU metadata. **No** stand-alone "Vendor SKUs" panel and **no** "+ Link Vendor SKU" affordance — link management lives on the Modify form (cross-ref Relationships above). Dependent-reference warnings (stale Adaptor/USB references on Payment Terminal SKUs) are highlighted in red.
 
 
 #### Cross-object dependencies
-- SKU Types, Vendors, Terminal Parent SKU (for Payment Terminal types only).
+- SKU Types and Vendors must exist. A Vendor SKU is **not** required to create an Innoviti SKU.
 
 #### Acceptance
+- Creating an Innoviti SKU with no `vendor_sku_ids` returns HTTP 201 (Vendor SKU is optional). The new SKU has zero rows in `sku_vendor_links`.
+- Creating an Innoviti SKU that references a Vendor SKU of a different SKU Type returns 422.
+- Creating an Innoviti SKU with valid same-type `vendor_sku_ids` returns 201, and the first id in the array is marked `is_default = true` in `sku_vendor_links`.
 - Creating a Payment Terminal SKU with no existing Adaptor SKU returns 422 with a clear "create Adaptor SKU first" message.
 - PATCH that attempts to change `sku_type_id` returns 422.
 - A 15 MB (or any >10 MB) PDF upload is rejected.
 - Setting an Adaptor SKU to Inactive shows a warning enumerating dependent Payment Terminal SKUs; on confirm, the dependent Payment Terminal SKU page renders the Adaptor reference in red.
-- Toggling Parent SKU type is not allowed.
 
-### 8.2 : EMPTY
+### 8.2 Terminal Parent SKU — REMOVED
 
-### 8.3 Vendor SKU (SKU↔Vendor association)
+The Terminal Parent SKU object that previously lived in §8.2 has been removed from the system. Payment Terminal SKUs no longer carry a `parent_sku_id`; the `/terminal-parent-skus` routes no longer exist; the change-log enum no longer carries a `TerminalParentSku` value. The slot is retained to preserve §8 sub-numbering; no current object lives here.
+
+### 8.3 Vendor SKU (first-class entity) and Innoviti↔Vendor SKU links
+
+The legacy "SKU↔Vendor association" row (`sku_vendor_assoc`) is gone. A **Vendor SKU** is now a first-class object owned by exactly one Vendor: it carries its own number, name, MOQ, unit price, spec PDF, SKU Type, and status. The same Vendor SKU may supply **many** Innoviti SKUs through a separate **link** table (`sku_vendor_links`) whose only payload is the `is_default` flag.
+
+#### 8.3.a Vendor SKU (`vendor_skus`)
 
 #### Fields & types
-- `sku_vendor_assoc_id` (auto, internal).
-- `sku_id` (FK → Innoviti SKU, **required**).
-- `vendor_id` (FK → Vendors, **required**; the Vendor may be Active or Inactive — Inactive vendors remain selectable, see §6).
-- `vendor_sku_number` (string, **required**) — the vendor's own part number.
-- `vendor_sku_specification_pdf` (file ref → object storage; PDF, **≤10 MB**; **latest version only**).
-- `vendor_sku_price_moq` (integer ≥1).
-- `vendor_sku_price_unit` (decimal, ≥0).
+- `vendor_sku_id` (auto, internal).
+- `vendor_id` (FK → Vendors, **required**, **immutable after creation**; the Vendor may be Active or Inactive — Inactive vendors remain selectable, see §6).
+- `sku_type_id` (FK → SKU Types, **required at creation**, **immutable after creation**). Lets the Innoviti SKU create screen filter vendor SKUs to ones of the matching category, and the backend enforces that every link stays within one SKU Type.
+- `vendor_sku_number` (string, **required**) — the vendor's own part number. **Unique within its `vendor_id`** among non-deleted rows.
+- `vendor_sku_name` (string, optional, 1–100 chars) — the vendor's own product name; surfaced in pickers and listings.
+- `vendor_sku_price_moq` (integer ≥1, optional).
+- `vendor_sku_price_unit` (decimal, ≥0, optional).
+- `vendor_sku_specification_pdf` (file ref → object storage; PDF, **≤10 MB**; **latest version only** — new uploads overwrite the previous file).
+- `status` (enum: `Active`, `Inactive`; default `Active`).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
-**No `is_primary` flag.** All supplier rows are peers; there is no "primary supplier" concept. An SKU may have one or many supplier rows, and none of them is privileged over the others.
-
 #### API endpoints
-- `POST   /skus/{sku_id}/vendors` — add a supplier row.
-- `GET    /skus/{sku_id}/vendors` — list all supplier rows (insertion order).
-- `PATCH  /skus/{sku_id}/vendors/{assoc_id}` — update vendor SKU number / price / spec PDF.
-- `DELETE /skus/{sku_id}/vendors/{assoc_id}` — **soft delete** an association row. No "primary" guard.
-- `POST   /skus/{sku_id}/vendors/{assoc_id}/specification` — upload (overwrite) the vendor's spec PDF.
+- `POST   /vendor-skus` — create (SA or Admin). Required body: `vendor_id`, `sku_type_id`, `vendor_sku_number`.
+- `GET    /vendor-skus/{id}` — read one (includes vendor name and SKU Type name). **Does not** expose a list of linked Innoviti SKUs (the link table is internal — see §8.3.b).
+- `GET    /vendor-skus` — list with filters `vendor_id`, `sku_type_id`, `status`, `include_deleted`.
+- `PATCH  /vendor-skus/{id}` — update vendor SKU number / name / MOQ / unit price. `vendor_id` and `sku_type_id` are **immutable** and rejected if changed.
+- `POST   /vendor-skus/{id}/status` — toggle Active/Inactive.
+- `DELETE /vendor-skus/{id}` — **soft delete**. Existing rows in `sku_vendor_links` that reference this Vendor SKU are also soft-deleted in the same transaction (cascading internal cleanup); no 409 guard is rendered because the link table is not user-visible.
+- `POST   /vendor-skus/{id}/restore` — restore a soft-deleted Vendor SKU (subject to the `(vendor_id, vendor_sku_number)` uniqueness check). Cascaded link soft-deletes are **not** auto-restored.
+- `POST   /vendor-skus/{id}/specification` — upload (overwrite) the spec PDF. ≤10 MB.
+- `GET    /vendor-skus/{id}/specification` — fetch the current spec PDF.
 
 #### Validation rules
+- `(vendor_id, vendor_sku_number)`: unique among non-deleted rows — enforced by a partial unique index.
+- `vendor_id`, `sku_type_id`: required at create; both must reference an existing, non-deleted row; both immutable on PATCH.
 - `vendor_sku_specification_pdf`: PDF MIME; ≤10 MB; new uploads overwrite the prior file.
-- `(sku_id, vendor_id, vendor_sku_number)`: unique across non-deleted rows — the same vendor cannot register the same part number twice against the same SKU.
 
 #### Business rules / invariants
-- An SKU must have **at least one** supplier row to be considered fully defined (UI surfaces this as a warning if zero supplier rows exist, but the API does not enforce it).
-- Deleting the last supplier row leaves the SKU with zero suppliers; this is allowed but flagged on the SKU detail page.
+- A Vendor SKU is owned by exactly one Vendor and lives in exactly one SKU Type — both are immutable. To "move" a Vendor SKU to a different vendor or type, create a new Vendor SKU.
+- An Inactive Vendor SKU still appears in pickers, annotated; soft-deleted ones do not.
+- The link table (`sku_vendor_links`) is internal and never surfaced on `GET /vendor-skus*`. The Manage Vendor SKU screen does **not** render a "Linked Innoviti SKUs" column.
 
 #### UI surface
-- **Manage Vendor SKU** screen lists every (Innoviti SKU × Vendor) association row with vendor SKU number, price, and the spec PDF link.
-- **Add / Modify Vendor SKU form**: Add, Modify, and Delete supplier rows. No "set as primary" affordance.
+- **Manage Vendor SKU** screen. Each row is one Vendor SKU. Columns: Vendor, SKU Type, Vendor SKU Number, Vendor SKU Name, MOQ, Unit price, Status, Spec PDF (View / Upload / Replace), Actions (Modify / Activate-Deactivate / Delete; Restore for soft-deleted rows). Filters: Vendor, SKU Type, Show deleted. **No** "Linked Innoviti SKUs" column.
+- **Add Vendor SKU modal**: Vendor (required), SKU Type (required), Vendor SKU Number (required), Vendor SKU Name (optional), MOQ, Unit price.
+- **Modify Vendor SKU modal**: Vendor and SKU Type are shown disabled (immutable); only number, name and price fields are editable.
 
 #### Cross-object dependencies
-- Innoviti SKU and Vendors must exist.
+- Vendors and SKU Types must exist.
 
 #### Acceptance
-- An SKU may have zero, one, or many supplier rows; no row is marked "primary."
-- DELETE on any supplier row succeeds (soft delete) without primary-related rejections.
-- The same vendor adding two rows for the same SKU with **different** vendor SKU numbers is allowed; same vendor SKU number on a second row for the same (SKU, Vendor) pair is rejected.
+- Creating a Vendor SKU without `sku_type_id` returns 422.
+- Two Vendor SKUs of the same vendor cannot share a vendor SKU number; same number under a different vendor is accepted.
+- A PATCH that attempts to change `vendor_id` or `sku_type_id` returns 422.
+- DELETE on any Vendor SKU succeeds with a soft delete; any non-deleted `sku_vendor_links` rows referencing it are soft-deleted in the same transaction (no 409 surfaced).
+- `GET /vendor-skus/{id}` response carries vendor name and SKU Type name but no `linked_skus` array.
+
+#### 8.3.b Innoviti SKU ↔ Vendor SKU link (`sku_vendor_links`)
+
+This table records the Innoviti SKU ↔ Vendor SKU mapping for Phase 2 load resolution (see task2.md §6.5) and for the Innoviti SKU Manage page's vendor-count column. There is **no stand-alone management screen** and **no `/skus/{sku_id}/vendor-skus` REST surface**. The link set is mutated exclusively from the Innoviti SKU Create and Modify forms (via `POST /skus` and `PATCH /skus/{id}`). The current ids are surfaced read-only as `vendor_sku_ids` on `GET /skus` and `GET /skus/{id}` so the Modify form can pre-populate.
+
+#### Fields & types
+- `sku_vendor_link_id` (auto, internal).
+- `sku_id` (FK → Innoviti SKU, **required**).
+- `vendor_sku_id` (FK → Vendor SKU, **required**).
+- `is_default` (boolean, default `false`) — marks this link as the **default supplier** for the Innoviti SKU. Maintained internally; not exposed on any read.
+- `created_at`, `updated_at`, `deleted_at` (timestamps).
+
+#### API endpoints
+The link table is mutated only by the Innoviti SKU handlers and read only via the Innoviti SKU read paths:
+- `POST /skus` — inserts a link row for each id in the optional `vendor_sku_ids` array (atomic with the SKU create).
+- `PATCH /skus/{id}` — when `vendor_sku_ids` is supplied, reconciles the link set: ids not currently linked are inserted, links absent from the array are soft-deleted, the rest are untouched. Same-SKU-Type validation applies.
+- `GET /skus` / `GET /skus/{id}` — return a `vendor_sku_ids` array (live, non-deleted links, ordered by `sku_vendor_link_id`) so the Modify form can pre-populate.
+- Soft-deleting a Vendor SKU via `DELETE /vendor-skus/{id}` cascades to soft-delete its links (§8.3.a).
+
+There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, POST, PATCH, DELETE, or restore). Any such path returns 404.
+
+#### Validation rules (enforced inside `POST /skus` and `PATCH /skus/{id}`)
+- `(sku_id, vendor_sku_id)`: unique across non-deleted rows — enforced by a partial unique index. Duplicate ids in the same `vendor_sku_ids` array are de-duplicated server-side; at most one row per pair is inserted.
+- At most one non-deleted link per `sku_id` may have `is_default = true` — enforced by a partial unique index.
+- **Same-SKU-Type rule**: every id in `vendor_sku_ids` must reference a Vendor SKU whose `sku_type_id` matches the Innoviti SKU's `sku_type_id`. Any mismatch fails the whole request with 422; no partial inserts persist.
+
+#### Business rules / invariants
+- **Optional at create and modify.** Both `POST /skus` and `PATCH /skus/{id}` accept an empty/omitted `vendor_sku_ids` — zero links is a valid state.
+- **Reconciled by `POST /skus` and `PATCH /skus/{id}`.** The Innoviti SKU handlers are the only paths that mutate `sku_vendor_links`. There is no per-link route (`POST/PATCH/DELETE /skus/{sku_id}/vendor-skus/...`).
+- **Default supplier.**
+  - On create with non-empty `vendor_sku_ids`, the first id becomes `is_default = true`.
+  - On PATCH, the existing default is preserved when its id is still in the supplied set. If the default was removed (or no default existed and at least one link survives), the first remaining link (by `sku_vendor_link_id`) is auto-promoted in the same transaction.
+  - If the post-PATCH link set is empty, the SKU has no default until a later PATCH supplies one.
+- **Soft delete cascade.** Soft-deleting a Vendor SKU (§8.3.a) soft-deletes every non-deleted `sku_vendor_links` row that referenced it, in the same transaction.
+
+#### UI surface
+- No standalone screen renders the contents of `sku_vendor_links`.
+- The only interaction is the "Vendor SKUs (optional · same SKU Type · editable after creation)" multi-select on the Innoviti SKU Create and Modify forms (§8.1). On Modify it is pre-populated from `GET /skus/{id}.vendor_sku_ids` and submits the revised array as part of the regular PATCH body.
+
+#### Cross-object dependencies
+- Innoviti SKU, Vendor SKU, and (through Vendor SKU) Vendor and SKU Type must exist.
+
+#### Acceptance
+- Creating an Innoviti SKU with empty / omitted `vendor_sku_ids` succeeds (HTTP 201) and writes zero rows to `sku_vendor_links`.
+- Creating an Innoviti SKU with valid same-type `vendor_sku_ids` succeeds and writes one `sku_vendor_links` row per id; the first id is `is_default = true`, the others `is_default = false`.
+- Creating or PATCHing an Innoviti SKU with a Vendor SKU of a different SKU Type returns 422; no partial link mutations persist.
+- PATCHing `vendor_sku_ids` to a set that adds A and removes B leaves any other existing link untouched; A is inserted, B is soft-deleted, and one `SkuVendorLink/Create` + one `SkuVendorLink/SoftDelete` change-log row are written.
+- PATCHing `vendor_sku_ids` to a set that excludes the current default and includes other ids promotes the first surviving link (by `sku_vendor_link_id`) to default in the same transaction.
+- There is no `/skus/{sku_id}/vendor-skus` route exposed by the application — any request to such a path returns 404.
+- Soft-deleting a Vendor SKU cascades to soft-delete its non-deleted link rows; the Vendor SKU's own soft-delete succeeds without a 409 guard.
 
 ---
 
-## 9. Terminal Parent SKU
-
-### Fields & types
-- `parent_sku_number` (string, auto, format `PNN-NNNNN` starting at `PNN-10001`).
-- `name` (string, **required**, 1–100 chars).
-- `description` (string, free text).
-- `created_at`, `updated_at`, `deleted_at` (timestamps; `deleted_at` always null — see delete rule).
-
-**No Status field.**
-
-### API endpoints
-- `POST   /terminal-parent-skus` — create (SA or Admin).
-- `GET    /terminal-parent-skus/{id}` — read one.
-- `GET    /terminal-parent-skus` — list.
-- `PATCH  /terminal-parent-skus/{id}` — update name/description.
-- `DELETE /terminal-parent-skus/{id}` — **hard delete when unreferenced**; 409 Conflict (with the dependent SKU list in the response) if any SKU — including soft-deleted SKUs — references this Parent SKU.
-
-### Validation rules
-- `name`: unique (case-insensitive).
-- Delete precondition: zero SKUs reference this Terminal Parent SKU (counts both Active and Inactive SKUs since their `parent_sku_id` is preserved).
-
-### Business rules / invariants
-- No Status concept.
-
-### UI surface
-- **Manage Terminal Parent SKUs** screen with create / edit.
-
-### Cross-object dependencies
-- None upstream. Required for Payment Terminal SKU creation.
-
-### Acceptance
-- Creating a Payment Terminal SKU is impossible until at least one Terminal Parent SKU exists.
-- Deleting a Terminal Parent SKU referenced by any SKU returns 409.
-- After deleting all referencing SKUs (soft), the Terminal Parent SKU is still blocked from delete because soft-deleted SKUs retain `parent_sku_id` — to physically free the Terminal Parent SKU, the dependent SKUs must be hard-purged (not supported in this phase). Document this as expected behavior.
-
-> AMBIGUITY: The 35-question audit resolved the Terminal Parent SKU delete rule as "block hard delete when any SKU references it." Because Section 1 SKUs use soft delete (which retains `parent_sku_id`), in practice a Terminal Parent SKU referenced even once becomes effectively un-hard-deletable for the lifetime of this phase. This is consistent with the resolved decision and is documented as expected; no code change is requested, only flagging for product awareness.
-
----
-
-## 10. Inventory Locations
+## 9. Inventory Locations
 
 ### Fields & types
 - `location_index` (string, auto, format `LIN-NNNNNNNN` starting at `LIN-10000001`, 8 digits).
@@ -613,13 +650,13 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ---
 
-## 11. Change Log (cross-cutting, minimal)
+## 10. Change Log (cross-cutting, minimal)
 
 A single change-log facility records **one row per mutation** on every Section 1 object. The log is intentionally minimal: it answers "who did what, to which object, when" — not "which field changed from X to Y." Per-field diff history is **out of scope**.
 
 ### Fields & types
 - `change_log_id` (auto, internal).
-- `object_type` (enum: `User`, `UserType`, `Contact`, `Vendor`, `VendorType`, `SKU`, `SKUType`, `SKUVendorAssociation`, `TerminalParentSKU`, `Location`).
+- `object_type` (enum: `User`, `UserType`, `Contact`, `Vendor`, `VendorType`, `SKU`, `SKUType`, `VendorSku`, `SkuVendorLink`, `Location`). The legacy `SKUVendorAssociation` value is dropped — Vendor SKUs and Innoviti↔Vendor SKU links are now two distinct objects (see §8.3). `SkuVendorLink` rows are written by `POST /skus` and `PATCH /skus/{id}` (Create / SoftDelete during reconciliation; Update when the default supplier is auto-promoted) and by `DELETE /vendor-skus/{id}` (SoftDelete via cascade). The link table has no standalone REST surface.
 - `object_id` (string) — the target object's primary key (in its native format, e.g., `UIN-10001`, `VEN-10005`).
 - `actor_user_id` (FK → Users) — who performed the change.
 - `actor_user_index` (string) — denormalized snapshot of the actor's `user_index` at the time of change (preserved across actor renames/soft deletes).
@@ -640,9 +677,9 @@ One mutation = one row. There is **no** `field_name`, `old_value`, or `new_value
 
 ### Business rules / invariants
 - Every Section 1 mutation writes its log row in the same transaction as the mutation. If log write fails, the parent mutation must fail.
-- Soft delete → `action = SoftDelete`. Hard delete (Vendor Types when unused, Terminal Parent SKU when unreferenced) → `action = HardDelete`.
-- Status toggles (`Active`/`Inactive`) on Users, Vendors, SKUs → `action = StatusToggle`.
-- PDF uploads (SKU spec, Vendor-SKU spec) → `action = Upload`.
+- Soft delete → `action = SoftDelete`. Hard delete (Vendor Types when unused) → `action = HardDelete`.
+- Status toggles (`Active`/`Inactive`) on Users, Vendors, Innoviti SKUs, Vendor SKUs → `action = StatusToggle`.
+- PDF uploads (Innoviti SKU spec, Vendor SKU spec) → `action = Upload`.
 
 ### UI surface
 - **No per-object Activity / History panel** in this phase.
@@ -668,6 +705,6 @@ One mutation = one row. There is **no** `field_name`, `old_value`, or `new_value
 - Dispatch and retrieval flows.
 - MIS reporting and report builders.
 - Load Data journeys (`_Load_data_requirements.txt`).
-- Master records derived from Load Data — Payment Terminal Master, SIM Card Master, Accessories Master, Load Stock.
+- Master records derived from Load Data — Payment Terminal Master, SIM Card Master, Base Station Master, Load Stock.
 - Inventory state machine (in-transit vs at-location) — modeled in a later phase when orders/dispatch ship.
 - Operational user-type access to any Section 1 object — operational types exist but have no permissions in this phase.

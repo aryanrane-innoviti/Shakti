@@ -1,53 +1,60 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../lib/toast.jsx';
 import Modal from '../components/Modal.jsx';
 
 /**
- * Manage Vendor SKU (task1.md §8.3 line 509)
- * Lists every (Innoviti SKU × Vendor) association row globally. Each row is a
- * distinct supplier with its own vendor SKU #, MOQ, unit price, and spec PDF.
- * No "primary" concept — all peers.
+ * Manage Vendor SKU — the vendor SKU catalogue.
+ *
+ * A vendor SKU is a first-class entity: a vendor's product with its own
+ * number, name, pricing and spec PDF. It can supply many Innoviti SKUs; those
+ * links are created and managed from each Innoviti SKU's detail page.
  */
 export default function VendorSkus() {
   const toast = useToast();
   const [rows, setRows] = useState([]);
-  const [skus, setSkus] = useState([]);
   const [vendors, setVendors] = useState([]);
-  const [filter, setFilter] = useState({ sku_id: '', vendor_id: '' });
+  const [skuTypes, setSkuTypes] = useState([]);
+  const [filter, setFilter] = useState({ vendor_id: '', sku_type_id: '' });
+  const [showDeleted, setShowDeleted] = useState(false);
   const [edit, setEdit] = useState(null);
   const [editMode, setEditMode] = useState('add');
   const pdfRefs = useRef({});
 
   const load = () => {
-    const q = Object.entries(filter).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('&');
-    api.get('/skus/-/vendor-assocs' + (q ? '?' + q : '')).then(setRows);
+    const parts = Object.entries(filter).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`);
+    if (showDeleted) parts.push('include_deleted=1');
+    const q = parts.join('&');
+    api.get('/vendor-skus' + (q ? '?' + q : '')).then(setRows);
   };
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [filter, showDeleted]);
   useEffect(() => {
-    api.get('/skus').then(setSkus);
     api.get('/vendors').then(setVendors);
+    api.get('/sku-types').then(setSkuTypes);
   }, []);
 
   const save = async () => {
     try {
       if (editMode === 'add') {
-        if (!edit.sku_id) { toast.push('Pick an SKU', 'error'); return; }
-        await api.post(`/skus/${edit.sku_id}/vendors`, {
+        if (!edit.vendor_id) { toast.push('Pick a vendor', 'error'); return; }
+        if (!edit.sku_type_id) { toast.push('Pick a SKU Type', 'error'); return; }
+        await api.post('/vendor-skus', {
           vendor_id: edit.vendor_id,
+          sku_type_id: edit.sku_type_id,
           vendor_sku_number: edit.vendor_sku_number,
+          vendor_sku_name: edit.vendor_sku_name,
           vendor_sku_price_moq: edit.vendor_sku_price_moq,
           vendor_sku_price_unit: edit.vendor_sku_price_unit,
         });
-        toast.push('Supplier row added', 'success');
+        toast.push('Vendor SKU added', 'success');
       } else {
-        await api.patch(`/skus/${edit.sku_id}/vendors/${edit.sku_vendor_assoc_id}`, {
+        await api.patch(`/vendor-skus/${edit.vendor_sku_id}`, {
           vendor_sku_number: edit.vendor_sku_number,
+          vendor_sku_name: edit.vendor_sku_name,
           vendor_sku_price_moq: edit.vendor_sku_price_moq,
           vendor_sku_price_unit: edit.vendor_sku_price_unit,
         });
-        toast.push('Supplier row updated', 'success');
+        toast.push('Vendor SKU updated', 'success');
       }
       setEdit(null);
       load();
@@ -55,17 +62,40 @@ export default function VendorSkus() {
   };
 
   const remove = async (r) => {
-    if (!confirm(`Remove ${r.vendor_name}'s row for ${r.sku_number}?`)) return;
-    await api.del(`/skus/${r.sku_id}/vendors/${r.sku_vendor_assoc_id}`);
-    load();
+    if (!confirm(`Delete vendor SKU "${r.vendor_sku_number}"?`)) return;
+    try {
+      await api.del(`/vendor-skus/${r.vendor_sku_id}`);
+      toast.push('Vendor SKU deleted', 'success');
+      load();
+    } catch (e) {
+      toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error');
+    }
+  };
+
+  const toggleStatus = async (r) => {
+    const next = r.status === 'Active' ? 'Inactive' : 'Active';
+    if (!confirm(`Mark vendor SKU "${r.vendor_sku_number}" as ${next}?`)) return;
+    try {
+      await api.post(`/vendor-skus/${r.vendor_sku_id}/status`);
+      toast.push(`Vendor SKU marked ${next}`, 'success');
+      load();
+    } catch (e) { toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
+  };
+
+  const restore = async (r) => {
+    try {
+      await api.post(`/vendor-skus/${r.vendor_sku_id}/restore`);
+      toast.push('Vendor SKU restored', 'success');
+      load();
+    } catch (e) { toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
   };
 
   const uploadPdf = async (r, file) => {
     if (!file) return;
     try {
-      await api.upload(`/skus/${r.sku_id}/vendors/${r.sku_vendor_assoc_id}/specification`, file);
+      await api.upload(`/vendor-skus/${r.vendor_sku_id}/specification`, file);
       load();
-      toast.push('Vendor spec uploaded', 'success');
+      toast.push('Spec PDF uploaded', 'success');
     } catch (e) { toast.push(`Upload failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
   };
 
@@ -73,7 +103,7 @@ export default function VendorSkus() {
     try {
       const base = import.meta.env.VITE_API_URL || 'http://localhost:4000';
       const token = localStorage.getItem('shakti_token');
-      const res = await fetch(`${base}/skus/${r.sku_id}/vendors/${r.sku_vendor_assoc_id}/specification`, {
+      const res = await fetch(`${base}/vendor-skus/${r.vendor_sku_id}/specification`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error('Could not load PDF');
@@ -92,16 +122,12 @@ export default function VendorSkus() {
           className="primary"
           onClick={() => {
             setEditMode('add');
-            setEdit({ sku_id: '', vendor_id: '', vendor_sku_number: '', vendor_sku_price_moq: '', vendor_sku_price_unit: '' });
+            setEdit({ vendor_id: '', sku_type_id: '', vendor_sku_number: '', vendor_sku_name: '', vendor_sku_price_moq: '', vendor_sku_price_unit: '' });
           }}
-        >+ Add supplier row</button>
+        >+ Add Vendor SKU</button>
       </div>
 
       <div className="filter-bar">
-        <select value={filter.sku_id} onChange={(e) => setFilter({ ...filter, sku_id: e.target.value })}>
-          <option value="">Any SKU</option>
-          {skus.map((s) => <option key={s.sku_id} value={s.sku_id}>{s.sku_number} — {s.sku_name}</option>)}
-        </select>
         <select value={filter.vendor_id} onChange={(e) => setFilter({ ...filter, vendor_id: e.target.value })}>
           <option value="">Any vendor</option>
           {vendors.map((v) => (
@@ -110,76 +136,112 @@ export default function VendorSkus() {
             </option>
           ))}
         </select>
+        <select value={filter.sku_type_id} onChange={(e) => setFilter({ ...filter, sku_type_id: e.target.value })}>
+          <option value="">Any SKU Type</option>
+          {skuTypes.map((t) => <option key={t.sku_type_id} value={t.sku_type_id}>{t.name}</option>)}
+        </select>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          <input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} />
+          Show deleted
+        </label>
       </div>
 
       <div className="card table-wrap">
         <p className="help-text" style={{ marginTop: 0 }}>
-          Each row is a distinct supplier for the SKU. Multiple vendors can supply the same SKU; the
-          same vendor may also have multiple rows for one SKU with different vendor SKU numbers.
-          No row is marked "primary".
+          Each row is one vendor SKU — a vendor's product with its own number, name, price and spec.
+          The Innoviti SKU ↔ Vendor SKU mapping is captured at Innoviti SKU creation only and is
+          not editable from this screen.
         </p>
-        <table>
+        <table className="card-table" style={{ tableLayout: 'fixed', minWidth: 1000 }}>
+          <colgroup>
+            <col style={{ width: '15%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '7%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '8%' }} />
+            <col style={{ width: '11%' }} />
+            <col style={{ width: '13%' }} />
+          </colgroup>
           <thead><tr>
-            <th>Innoviti SKU</th><th>SKU Type</th><th>Vendor</th><th>Vendor SKU #</th>
-            <th>MOQ</th><th>Unit price</th><th>Vendor Spec PDF</th><th></th>
+            <th>Vendor</th><th>SKU Type</th><th>Vendor SKU Number</th><th>Vendor SKU Name</th><th>MOQ</th><th>Unit price</th>
+            <th>Status</th><th>Spec PDF</th><th></th>
           </tr></thead>
           <tbody>
             {rows.length === 0 && (
-              <tr><td colSpan={8} style={{ textAlign: 'center', color: '#888' }}>No supplier rows yet.</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: '#888' }}>No vendor SKUs yet.</td></tr>
             )}
-            {rows.map((r) => (
-              <tr key={r.sku_vendor_assoc_id}>
-                <td>
-                  <Link to={`/skus/${r.sku_id}`}>{r.sku_number}</Link>{' '}
-                  <span className="muted">{r.sku_name}</span>
-                </td>
-                <td>{r.sku_type_name}</td>
-                <td>
+            {rows.map((r) => {
+              const deleted = !!r.deleted_at;
+              return (
+              <tr key={r.vendor_sku_id} style={deleted ? { opacity: 0.55 } : undefined}>
+                <td data-label="Vendor">
                   {r.vendor_name}
                   {r.vendor_status === 'Inactive' && <span className="badge inactive" style={{ marginLeft: 6 }}>Inactive</span>}
+                  {deleted && <span className="badge inactive" style={{ marginLeft: 6 }}>Deleted</span>}
                 </td>
-                <td><code>{r.vendor_sku_number}</code></td>
-                <td>{r.vendor_sku_price_moq ?? '—'}</td>
-                <td>{r.vendor_sku_price_unit ?? '—'}</td>
-                <td>
-                  <div
-                    style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-                    title={r.vendor_sku_specification_pdf ? String(r.vendor_sku_specification_pdf).split(/[\\/]/).pop() : ''}
-                  >
-                    {r.vendor_sku_specification_pdf && (
-                      <button type="button" onClick={() => viewPdf(r)}>View</button>
-                    )}
-                    <input
-                      ref={(el) => { pdfRefs.current[r.sku_vendor_assoc_id] = el; }}
-                      type="file"
-                      accept="application/pdf"
-                      style={{ display: 'none' }}
-                      onChange={(e) => {
-                        const f = e.target.files && e.target.files[0];
-                        if (f) { uploadPdf(r, f); e.target.value = ''; }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => pdfRefs.current[r.sku_vendor_assoc_id]?.click()}
-                    >
-                      {r.vendor_sku_specification_pdf ? 'Replace' : 'Upload'}
-                    </button>
-                  </div>
+                <td data-label="SKU Type">{r.sku_type_name || <span className="muted">—</span>}</td>
+                <td data-label="Vendor SKU Number"><code>{r.vendor_sku_number}</code></td>
+                <td data-label="Vendor SKU Name">{r.vendor_sku_name || '—'}</td>
+                <td data-label="MOQ">{r.vendor_sku_price_moq ?? '—'}</td>
+                <td data-label="Unit price">{r.vendor_sku_price_unit ?? '—'}</td>
+                <td data-label="Status">
+                  <span className={`badge ${r.status === 'Active' ? 'active' : 'inactive'} sm`}>{r.status}</span>
                 </td>
-                <td>
-                  <button onClick={() => { setEditMode('edit'); setEdit({ ...r }); }}>Modify</button>{' '}
-                  <button onClick={() => remove(r)}>Delete</button>
+                <td data-label="Spec PDF" className="actions-cell">
+                  {deleted ? (
+                    <span className="muted">
+                      {r.vendor_sku_specification_pdf
+                        ? String(r.vendor_sku_specification_pdf).split(/[\\/]/).pop()
+                        : '—'}
+                    </span>
+                  ) : (
+                    <div className="row-actions">
+                      {r.vendor_sku_specification_pdf && (
+                        <button type="button" onClick={() => viewPdf(r)}>View</button>
+                      )}
+                      <input
+                        ref={(el) => { pdfRefs.current[r.vendor_sku_id] = el; }}
+                        type="file"
+                        accept="application/pdf"
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const f = e.target.files && e.target.files[0];
+                          if (f) { uploadPdf(r, f); e.target.value = ''; }
+                        }}
+                      />
+                      <button type="button" onClick={() => pdfRefs.current[r.vendor_sku_id]?.click()}>
+                        {r.vendor_sku_specification_pdf ? 'Replace' : 'Upload'}
+                      </button>
+                    </div>
+                  )}
+                </td>
+                <td data-label="Actions" className="actions-cell">
+                  {deleted ? (
+                    <div className="row-actions">
+                      <button onClick={() => restore(r)}>Restore</button>
+                    </div>
+                  ) : (
+                    <div className="row-actions">
+                      <button onClick={() => { setEditMode('edit'); setEdit({ ...r }); }}>Modify</button>
+                      <button onClick={() => toggleStatus(r)}>
+                        {r.status === 'Active' ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button onClick={() => remove(r)}>Delete</button>
+                    </div>
+                  )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
 
       {edit && (
         <Modal
-          title={editMode === 'add' ? 'Add supplier row' : `Modify ${edit.vendor_name} → ${edit.sku_number}`}
+          title={editMode === 'add' ? 'Add Vendor SKU' : `Modify ${edit.vendor_sku_number}`}
           onClose={() => setEdit(null)}
           actions={<>
             <button onClick={() => setEdit(null)}>Cancel</button>
@@ -187,17 +249,6 @@ export default function VendorSkus() {
           </>}
         >
           <div className="form-grid">
-            <div>
-              <label>Innoviti SKU *</label>
-              {editMode === 'add' ? (
-                <select value={edit.sku_id || ''} onChange={(e) => setEdit({ ...edit, sku_id: Number(e.target.value) })}>
-                  <option value="">Pick…</option>
-                  {skus.map((s) => <option key={s.sku_id} value={s.sku_id}>{s.sku_number} — {s.sku_name}</option>)}
-                </select>
-              ) : (
-                <input value={`${edit.sku_number} — ${edit.sku_name}`} disabled />
-              )}
-            </div>
             <div>
               <label>Vendor *</label>
               {editMode === 'add' ? (
@@ -209,7 +260,19 @@ export default function VendorSkus() {
                 <input value={edit.vendor_name || ''} disabled />
               )}
             </div>
-            <div><label>Vendor SKU # *</label><input value={edit.vendor_sku_number || ''} onChange={(e) => setEdit({ ...edit, vendor_sku_number: e.target.value })} /></div>
+            <div>
+              <label>SKU Type *{editMode === 'edit' ? ' (immutable)' : ''}</label>
+              {editMode === 'add' ? (
+                <select value={edit.sku_type_id || ''} onChange={(e) => setEdit({ ...edit, sku_type_id: Number(e.target.value) })}>
+                  <option value="">Pick…</option>
+                  {skuTypes.map((t) => <option key={t.sku_type_id} value={t.sku_type_id}>{t.name}</option>)}
+                </select>
+              ) : (
+                <input value={edit.sku_type_name || '—'} disabled />
+              )}
+            </div>
+            <div><label>Vendor SKU Number *</label><input value={edit.vendor_sku_number || ''} onChange={(e) => setEdit({ ...edit, vendor_sku_number: e.target.value })} /></div>
+            <div><label>Vendor SKU Name</label><input value={edit.vendor_sku_name || ''} onChange={(e) => setEdit({ ...edit, vendor_sku_name: e.target.value })} placeholder="optional" /></div>
             <div>
               <label>MOQ</label>
               <input
@@ -239,9 +302,8 @@ export default function VendorSkus() {
               />
             </div>
             <div className="full help-text">
-              The unique key is (SKU, vendor, vendor SKU #). The same vendor may add multiple rows
-              for one SKU as long as the vendor SKU # differs. Upload the vendor spec PDF from the
-              row in the table after saving.
+              A vendor SKU number must be unique within its vendor. After saving, link this vendor
+              SKU to the Innoviti SKUs it supplies from each Innoviti SKU's detail page.
             </div>
           </div>
         </Modal>

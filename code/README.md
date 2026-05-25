@@ -58,8 +58,7 @@ The SA password is **re-synced from the config secret on every boot** — change
 | Vendors (VEN, two address blocks, GSTIN validation, status toggle, dep-blocked delete, inactive-vendor pickers) | ✅ |
 | SKU Types (immutable `serial_eligible`, soft-delete-when-unused) | ✅ |
 | SKUs (INN, type immutable, STM gated by `serial_eligible`, PT prerequisites, 10 MB PDF, latest-only) | ✅ |
-| SKU↔Vendor assoc (PEERS — no primary, `(sku, vendor, vendor_sku_number)` unique) | ✅ |
-| Terminal Parent SKUs (PNN, no Status, hard-delete-when-unreferenced) | ✅ |
+| Vendor SKUs (first-class: number/name/price/spec, `(vendor, number)` unique) + many-to-many links to Innoviti SKUs, one default per SKU | ✅ |
 | Locations (LIN, name not unique, vendor change keeps contacts, SA-only vendor change) | ✅ |
 | Pincode lookup (third-party API, multi-city dropdown, block-on-failure) | ✅ |
 | Change log (minimal: object/actor/action/timestamp, no per-field diff) | ✅ |
@@ -109,7 +108,6 @@ code/
 │           ├── vendors.js
 │           ├── skuTypes.js
 │           ├── skus.js
-│           ├── terminalParentSkus.js
 │           ├── locations.js
 │           ├── changeLog.js
 │           ├── backup.js
@@ -131,7 +129,7 @@ code/
         │   └── toast.jsx
         └── pages/             # Login, Reset, InitialSetup, Users, Contacts,
                                # Vendors, VendorDetail, Locations, Skus, SkuDetail,
-                               # TerminalParentSkus, ObjectTypes, ChangeLog, Backups
+                               # ObjectTypes, ChangeLog, Backups
 ```
 
 ## What's intentionally out

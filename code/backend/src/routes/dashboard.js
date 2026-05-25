@@ -12,7 +12,7 @@ router.get('/', requireAuth, requireRole('SA', 'ADMIN'), async (req, res, next) 
   try {
     const [
       users, vendors, contacts, locations, skus,
-      parent_skus, user_types, vendor_types, sku_types,
+      user_types, vendor_types, sku_types,
       recent_changes,
     ] = await Promise.all([
       one(`SELECT
@@ -32,7 +32,6 @@ router.get('/', requireAuth, requireRole('SA', 'ADMIN'), async (req, res, next) 
              SUM(CASE WHEN status = 'Active'   THEN 1 ELSE 0 END)::int AS active,
              SUM(CASE WHEN status = 'Inactive' THEN 1 ELSE 0 END)::int AS inactive
            FROM skus WHERE deleted_at IS NULL`),
-      one(`SELECT COUNT(*)::int AS total FROM terminal_parent_skus`),
       one(`SELECT COUNT(*)::int AS total FROM user_types WHERE deleted_at IS NULL`),
       one(`SELECT COUNT(*)::int AS total FROM vendor_types WHERE deleted_at IS NULL`),
       one(`SELECT COUNT(*)::int AS total FROM sku_types WHERE deleted_at IS NULL`),
@@ -62,7 +61,7 @@ router.get('/', requireAuth, requireRole('SA', 'ADMIN'), async (req, res, next) 
     res.json({
       role: req.session.user_type_code,
       users, vendors, contacts, locations, skus,
-      parent_skus, user_types, vendor_types, sku_types,
+      user_types, vendor_types, sku_types,
       backups,
       recent_changes,
     });

@@ -8,16 +8,14 @@ export default function VendorDetail() {
   const [contacts, setContacts] = useState([]);
   const [users, setUsers] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [skus, setSkus] = useState([]);
-  const [supplierRows, setSupplierRows] = useState([]);
+  const [vendorSkus, setVendorSkus] = useState([]);
 
   useEffect(() => {
     api.get(`/vendors/${id}`).then(setVendor);
     api.get(`/vendors/${id}/contacts`).then(setContacts);
     api.get(`/users?vendor_id=${id}`).then(setUsers);
     api.get(`/locations?vendor_id=${id}`).then(setLocations);
-    api.get(`/skus?vendor_id=${id}`).then(setSkus);
-    api.get(`/skus/-/vendor-assocs?vendor_id=${id}`).then(setSupplierRows);
+    api.get(`/vendor-skus?vendor_id=${id}`).then(setVendorSkus);
   }, [id]);
 
   if (!vendor) return <div>Loading…</div>;
@@ -64,37 +62,41 @@ export default function VendorDetail() {
       </div>
 
       <div className="card">
-        <h3>SKUs supplied ({skus.length})</h3>
-        {skus.length === 0 ? (
-          <p>This vendor doesn't supply any SKUs yet.</p>
+        <h3>Vendor SKUs ({vendorSkus.length})</h3>
+        {vendorSkus.length === 0 ? (
+          <p>This vendor has no vendor SKUs yet.</p>
         ) : (
+          <div className="table-wrap">
           <table>
-            <thead><tr><th>INN</th><th>SKU Name</th><th>SKU Type</th><th>Vendor SKU #</th><th>Unit price</th></tr></thead>
+            <thead><tr><th>Vendor SKU Number</th><th>Vendor SKU Name</th><th>Unit price</th><th>Status</th><th>Supplies Innoviti SKUs</th></tr></thead>
             <tbody>
-              {skus.map((s) => {
-                const rows = supplierRows.filter((r) => r.sku_id === s.sku_id);
-                if (rows.length === 0) {
-                  return (
-                    <tr key={s.sku_id}>
-                      <td><Link to={`/skus/${s.sku_id}`}>{s.sku_number}</Link></td>
-                      <td>{s.sku_name}</td>
-                      <td>{s.sku_type_name}</td>
-                      <td colSpan={2} className="muted">supplier row missing detail</td>
-                    </tr>
-                  );
-                }
-                return rows.map((r, i) => (
-                  <tr key={r.sku_vendor_assoc_id}>
-                    <td>{i === 0 ? <Link to={`/skus/${s.sku_id}`}>{s.sku_number}</Link> : ''}</td>
-                    <td>{i === 0 ? s.sku_name : ''}</td>
-                    <td>{i === 0 ? s.sku_type_name : ''}</td>
-                    <td><code>{r.vendor_sku_number}</code></td>
-                    <td>{r.vendor_sku_price_unit ?? '—'}</td>
+              {vendorSkus.map((vs) => {
+                const linked = Array.isArray(vs.linked_skus) ? vs.linked_skus : [];
+                return (
+                  <tr key={vs.vendor_sku_id}>
+                    <td><code>{vs.vendor_sku_number}</code></td>
+                    <td>{vs.vendor_sku_name || '—'}</td>
+                    <td>{vs.vendor_sku_price_unit ?? '—'}</td>
+                    <td><span className={`badge ${vs.status === 'Active' ? 'active' : 'inactive'} sm`}>{vs.status}</span></td>
+                    <td>
+                      {linked.length === 0 ? (
+                        <span className="muted">none</span>
+                      ) : (
+                        <span className="stock-states">
+                          {linked.map((s) => (
+                            <Link key={s.sku_id} to={`/skus/${s.sku_id}`} title={s.sku_name}>
+                              {s.sku_number}{s.is_default ? ' ★' : ''}
+                            </Link>
+                          ))}
+                        </span>
+                      )}
+                    </td>
                   </tr>
-                ));
+                );
               })}
             </tbody>
           </table>
+          </div>
         )}
         <Link to="/vendor-skus">Manage Vendor SKUs →</Link>
       </div>

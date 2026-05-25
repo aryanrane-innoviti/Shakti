@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
@@ -70,9 +70,14 @@ export async function withTransaction(fn) {
 
 export async function initDb() {
   await ensureDatabase();
-  const schemaPath = join(__dirname, 'migrations', '001_init.sql');
-  if (existsSync(schemaPath)) {
-    const schema = readFileSync(schemaPath, 'utf8');
-    await pool.query(schema);
+  const migrationsDir = join(__dirname, 'migrations');
+  if (existsSync(migrationsDir)) {
+    const files = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+    for (const f of files) {
+      const sql = readFileSync(join(migrationsDir, f), 'utf8');
+      await pool.query(sql);
+    }
   }
 }

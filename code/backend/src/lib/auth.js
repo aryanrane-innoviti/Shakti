@@ -80,12 +80,14 @@ export function requireRole(...codes) {
   };
 }
 
-// Admin can do, SA cannot — EXCEPT during Initial Setup (no Admin exists yet),
-// when SA is permitted to POST /users to register the first Admin.
+// Write access for operational (Section 1) objects. Both SA and Admin are
+// permitted — every such write endpoint is specified as "SA or Admin"
+// (task1.md §1.6, §3–§7). SA-exclusive routes (User Types, Backups) use
+// requireRole('SA') instead; this guard is not the place to exclude SA.
+// Name kept as requireAdmin to avoid churn across ~14 route files.
 export function requireAdmin(req, res, next) {
   if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
-  if (req.session.user_type_code === 'ADMIN') return next();
-  if (req.session.user_type_code === 'SA' && req.initial_setup_in_progress) return next();
+  if (['ADMIN', 'SA'].includes(req.session.user_type_code)) return next();
   return res.status(403).json({ error: 'admin_only' });
 }
 

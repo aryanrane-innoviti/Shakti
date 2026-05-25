@@ -14,6 +14,18 @@ function StatCard({ to, label, value, sub, accent = false }) {
   return to ? <Link to={to} className="stat-link">{Body}</Link> : Body;
 }
 
+function ActionCard({ to, label, sub }) {
+  return (
+    <Link to={to} className="stat-link">
+      <div className="stat-card action">
+        <div className="stat-label">{label}</div>
+        {sub && <div className="stat-sub">{sub}</div>}
+        <div className="stat-arrow" aria-hidden="true">→</div>
+      </div>
+    </Link>
+  );
+}
+
 function relTime(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -54,13 +66,21 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Audit — reserved tab for the future audit module */}
-      <div className="audit-tab" role="button" aria-disabled="true" title="Audit module ships in a later phase">
-        <span className="audit-tab-label">Audit</span>
-        <span className="audit-tab-status">Coming soon</span>
-      </div>
+      {/* ============ Load Stock quick entry (Admin only) ============ */}
+      {isAdmin && (
+        <>
+          <h2 className="section-title">Load stock</h2>
+          <div className="stat-grid">
+            <ActionCard to="/load-stock?tab=payment-terminal" label="Payment Terminals" sub="Upload CSV or XLSX" />
+            <ActionCard to="/load-stock?tab=sim-card"         label="SIM Cards"          sub="Upload CSV or XLSX" />
+            <ActionCard to="/load-stock?tab=base-station"     label="Base Stations"      sub="Upload CSV or XLSX" />
+            <ActionCard to="/load-stock?tab=errors"           label="Loading Errors"     sub="Past attempts & downloads" />
+          </div>
+        </>
+      )}
 
       {/* ============ Primary stats ============ */}
+      <h2 className="section-title">At a glance</h2>
       <div className="stat-grid">
         <StatCard
           to="/users" accent
@@ -72,20 +92,19 @@ export default function Dashboard() {
         {isAdmin && (
           <>
             <StatCard
-              to="/vendors"
+              to="/vendors" accent
               label="Vendors"
               value={data.vendors.total}
               sub={`${data.vendors.active} active · ${data.vendors.inactive} inactive`}
             />
-            <StatCard to="/contacts"  label="Contacts"  value={data.contacts.total}  sub="across all vendors" />
+            <StatCard to="/contacts"  accent label="Contacts"  value={data.contacts.total}  sub="across all vendors" />
             <StatCard to="/locations" label="Locations" value={data.locations.total} sub="warehouses & merchant sites" />
             <StatCard
               to="/skus"
-              label="SKUs"
+              label="Innoviti SKUs"
               value={data.skus.total}
               sub={`${data.skus.active} active · ${data.skus.inactive} inactive`}
             />
-            <StatCard to="/terminal-parent-skus" label="Terminal Parent SKUs" value={data.parent_skus.total} sub="logical groupings" />
           </>
         )}
 
@@ -95,7 +114,7 @@ export default function Dashboard() {
             <StatCard to="/backups"    accent label="Backups"    value={data.backups?.count ?? 0} sub={data.backups?.latest_at ? `Latest: ${relTime(data.backups.latest_at)}` : 'No snapshots yet'} />
             <StatCard label="Vendors"   value={data.vendors.total}   sub={`${data.vendors.active} active`} />
             <StatCard label="Locations" value={data.locations.total} sub="warehouses & merchant sites" />
-            <StatCard label="SKUs"      value={data.skus.total}      sub={`${data.skus.active} active`} />
+            <StatCard label="Innoviti SKUs" value={data.skus.total}  sub={`${data.skus.active} active`} />
           </>
         )}
       </div>

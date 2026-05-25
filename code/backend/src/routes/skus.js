@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { resolve, join, extname } from 'node:path';
 import { unlinkSync, existsSync, renameSync } from 'node:fs';
-import { pool, one, many } from '../db.js';
+import { pool, one, many, withTransaction } from '../db.js';
 import { config } from '../config.js';
 import { requireAuth, requireAdmin } from '../lib/auth.js';
 import { logChange } from '../lib/changeLog.js';
@@ -36,10 +36,32 @@ router.get('/', requireAuth, async (req, res, next) => {
     if (vendor_id) {
       params.push(Number(vendor_id));
       where.push(
-        `EXISTS (SELECT 1 FROM sku_vendor_assocs a WHERE a.sku_id = s.sku_id AND a.vendor_id = $${params.length} AND a.deleted_at IS NULL)`
+        `EXISTS (SELECT 1 FROM sku_vendor_links l
+                   JOIN vendor_skus vs ON vs.vendor_sku_id = l.vendor_sku_id
+                  WHERE l.sku_id = s.sku_id AND vs.vendor_id = $${params.length}
+                    AND l.deleted_at IS NULL AND vs.deleted_at IS NULL)`
       );
     }
-    const sql = `SELECT s.*, st.name AS sku_type_name, st.serial_eligible
+    // vendor_count: distinct vendors supplying this Innoviti SKU.
+    // vendor_sku_ids: the currently-linked Vendor SKU ids in link order, so
+    // the Modify form can pre-populate the multi-select.
+    const sql = `SELECT s.*, st.name AS sku_type_name, st.serial_eligible,
+                        COALESCE((
+                          SELECT COUNT(DISTINCT vs.vendor_id)::int
+                            FROM sku_vendor_links l
+                            JOIN vendor_skus vs ON vs.vendor_sku_id = l.vendor_sku_id
+                           WHERE l.sku_id = s.sku_id
+                             AND l.deleted_at IS NULL
+                             AND vs.deleted_at IS NULL
+                        ), 0) AS vendor_count,
+                        COALESCE((
+                          SELECT array_agg(l.vendor_sku_id ORDER BY l.sku_vendor_link_id)
+                            FROM sku_vendor_links l
+                            JOIN vendor_skus vs ON vs.vendor_sku_id = l.vendor_sku_id
+                           WHERE l.sku_id = s.sku_id
+                             AND l.deleted_at IS NULL
+                             AND vs.deleted_at IS NULL
+                        ), ARRAY[]::int[]) AS vendor_sku_ids
                    FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
                    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                   ORDER BY s.sku_id`;
@@ -51,21 +73,21 @@ router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const row = await one(
-      `SELECT s.*, st.name AS sku_type_name, st.serial_eligible,
-              p.name AS parent_sku_name
+      `SELECT s.*, st.name AS sku_type_name, st.serial_eligible
          FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
-         LEFT JOIN terminal_parent_skus p ON p.parent_sku_id = s.parent_sku_id
         WHERE s.sku_id = $1`,
       [id]
     );
     if (!row) return res.status(404).json({ error: 'not_found' });
-    const suppliers = await many(
-      `SELECT a.*, v.company_name AS vendor_name, v.status AS vendor_status
-         FROM sku_vendor_assocs a JOIN vendors v ON v.vendor_id = a.vendor_id
-        WHERE a.sku_id = $1 AND a.deleted_at IS NULL
-        ORDER BY a.sku_vendor_assoc_id`,
+    // Currently-linked Vendor SKU ids, for the Modify form to pre-populate.
+    const links = await many(
+      `SELECT l.vendor_sku_id FROM sku_vendor_links l
+         JOIN vendor_skus vs ON vs.vendor_sku_id = l.vendor_sku_id
+        WHERE l.sku_id = $1 AND l.deleted_at IS NULL AND vs.deleted_at IS NULL
+        ORDER BY l.sku_vendor_link_id`,
       [id]
     );
+    const vendor_sku_ids = links.map((l) => l.vendor_sku_id);
     // Resolve Payment Terminal component SKUs (adaptors, USB cables) so the UI can render
     // them with status and highlight inactive ones in red.
     const componentIds = [
@@ -84,14 +106,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       .map((aid) => componentMap.get(Number(aid))).filter(Boolean);
     const usb_cables = (Array.isArray(row.usb_cable_sku_ids) ? row.usb_cable_sku_ids : [])
       .map((aid) => componentMap.get(Number(aid))).filter(Boolean);
-    let parent = null;
-    if (row.parent_sku_id) {
-      parent = await one(
-        `SELECT parent_sku_id, parent_sku_number, name FROM terminal_parent_skus WHERE parent_sku_id = $1`,
-        [row.parent_sku_id]
-      );
-    }
-    res.json({ ...row, suppliers, adaptors, usb_cables, parent });
+    res.json({ ...row, vendor_sku_ids, adaptors, usb_cables });
   } catch (e) { next(e); }
 });
 
@@ -124,6 +139,16 @@ async function validateSkuCreate(body) {
   validatePrices(body);
   const st = await one(`SELECT * FROM sku_types WHERE sku_type_id = $1 AND deleted_at IS NULL`, [body.sku_type_id]);
   if (!st) throw new ValidationError('invalid sku_type_id', { sku_type_id: 'must reference an existing SKU type' });
+  // SKU name must be unique (case-insensitive) within its SKU Type.
+  const dup = await one(
+    `SELECT 1 FROM skus
+      WHERE LOWER(sku_name) = LOWER($1) AND sku_type_id = $2 AND deleted_at IS NULL`,
+    [body.sku_name, body.sku_type_id]
+  );
+  if (dup)
+    throw new ValidationError('A SKU with this name already exists for this type', {
+      sku_name: `a SKU named "${body.sku_name}" already exists in the "${st.name}" type`,
+    });
   if (body.stm === 'Serial' && !st.serial_eligible)
     throw new ValidationError(`SKU type "${st.name}" is not Serial-eligible`, {
       stm: `the SKU type "${st.name}" cannot use Serial tracking; pick "None"`,
@@ -137,7 +162,7 @@ async function validateSkuCreate(body) {
   if (st.name === 'Payment Terminal') {
     const adaptors = Array.isArray(body.adaptor_sku_ids) ? body.adaptor_sku_ids : [];
     const usbs = Array.isArray(body.usb_cable_sku_ids) ? body.usb_cable_sku_ids : [];
-    if (!adaptors.length || !usbs.length || !body.parent_sku_id) {
+    if (!adaptors.length || !usbs.length) {
       const adaptorsExist = await one(
         `SELECT COUNT(*)::int AS c FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
           WHERE st.name = 'Adaptors' AND s.deleted_at IS NULL`
@@ -146,22 +171,19 @@ async function validateSkuCreate(body) {
         `SELECT COUNT(*)::int AS c FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
           WHERE st.name = 'USB cables' AND s.deleted_at IS NULL`
       );
-      const parents = await one(`SELECT COUNT(*)::int AS c FROM terminal_parent_skus`);
       const missing = [];
       if (!adaptorsExist.c) missing.push('Adaptor SKU');
       if (!usbsExist.c) missing.push('USB Cable SKU');
-      if (!parents.c) missing.push('Terminal Parent SKU');
       if (missing.length)
         throw new ValidationError(
           `Cannot create Payment Terminal SKU — create ${missing.join(', ')} first`,
           { sku_type_id: `missing prerequisite SKUs: ${missing.join(', ')}. Create them first.` }
         );
       throw new ValidationError(
-        'Payment Terminal requires adaptor, USB cable and parent SKU selections',
+        'Payment Terminal requires adaptor and USB cable SKU selections',
         {
           adaptor_sku_ids: 'pick at least one adaptor SKU',
           usb_cable_sku_ids: 'pick at least one USB cable SKU',
-          parent_sku_id: 'pick a terminal parent SKU',
         }
       );
     }
@@ -175,20 +197,52 @@ router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
     const isPT = await isPaymentTerminal(req.body.sku_type_id);
     const adaptors = isPT ? JSON.stringify(req.body.adaptor_sku_ids || []) : null;
     const usbs = isPT ? JSON.stringify(req.body.usb_cable_sku_ids || []) : null;
-    const parent = isPT ? req.body.parent_sku_id : null;
-    const { rows } = await pool.query(
-      `INSERT INTO skus (sku_number, sku_name, description, stm, sku_type_id,
-                          approx_price_moq, approx_price_unit, status,
-                          parent_sku_id, adaptor_sku_ids, usb_cable_sku_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active', $8, $9::jsonb, $10::jsonb) RETURNING *`,
-      [
-        idx, req.body.sku_name, req.body.description || null, req.body.stm,
-        req.body.sku_type_id, req.body.approx_price_moq || null, req.body.approx_price_unit || null,
-        parent, adaptors, usbs,
-      ]
-    );
-    await logChange('SKU', idx, req.session, 'Create');
-    res.status(201).json(rows[0]);
+
+    // Optional: vendor SKUs picked on the create screen are linked at the same
+    // time. Innoviti SKUs may be created with zero links — the matching Vendor
+    // SKU may not exist yet. When ids are supplied, each must exist, be
+    // non-deleted, and share this SKU's type.
+    const vendorSkuIds = Array.isArray(req.body.vendor_sku_ids)
+      ? [...new Set(req.body.vendor_sku_ids.map(Number).filter(Number.isFinite))]
+      : [];
+    if (vendorSkuIds.length) {
+      const vskus = await many(
+        `SELECT vendor_sku_id, sku_type_id FROM vendor_skus
+          WHERE vendor_sku_id = ANY($1::int[]) AND deleted_at IS NULL`,
+        [vendorSkuIds]
+      );
+      if (vskus.length !== vendorSkuIds.length)
+        throw new ValidationError('invalid vendor_sku_ids', { vendor_sku_ids: 'one or more vendor SKUs do not exist' });
+      if (vskus.some((v) => v.sku_type_id && v.sku_type_id !== Number(req.body.sku_type_id)))
+        throw new ValidationError('vendor SKU type mismatch', { vendor_sku_ids: 'every vendor SKU must be of the same SKU type as this SKU' });
+    }
+
+    const created = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO skus (sku_number, sku_name, description, stm, sku_type_id,
+                            approx_price_moq, approx_price_unit, status,
+                            adaptor_sku_ids, usb_cable_sku_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active', $8::jsonb, $9::jsonb) RETURNING *`,
+        [
+          idx, req.body.sku_name, req.body.description || null, req.body.stm,
+          req.body.sku_type_id, req.body.approx_price_moq || null, req.body.approx_price_unit || null,
+          adaptors, usbs,
+        ]
+      );
+      const sku = rows[0];
+      await logChange('SKU', idx, req.session, 'Create', client);
+      // The first linked vendor SKU becomes the SKU's default supplier.
+      for (let i = 0; i < vendorSkuIds.length; i++) {
+        const { rows: lr } = await client.query(
+          `INSERT INTO sku_vendor_links (sku_id, vendor_sku_id, is_default)
+           VALUES ($1, $2, $3) RETURNING sku_vendor_link_id`,
+          [sku.sku_id, vendorSkuIds[i], i === 0]
+        );
+        await logChange('SkuVendorLink', lr[0].sku_vendor_link_id, req.session, 'Create', client);
+      }
+      return sku;
+    });
+    res.status(201).json(created);
   } catch (e) { next(e); }
 });
 
@@ -199,6 +253,19 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
     if (!existing) return res.status(404).json({ error: 'not_found' });
     if (req.body.sku_type_id !== undefined && req.body.sku_type_id !== existing.sku_type_id)
       throw new ValidationError('sku_type_id is immutable after creation', { sku_type_id: 'cannot be changed after the SKU is created' });
+    // Renaming must not collide with another SKU of the same type.
+    if (req.body.sku_name !== undefined) {
+      const dup = await one(
+        `SELECT 1 FROM skus
+          WHERE LOWER(sku_name) = LOWER($1) AND sku_type_id = $2
+            AND sku_id <> $3 AND deleted_at IS NULL`,
+        [req.body.sku_name, existing.sku_type_id, id]
+      );
+      if (dup)
+        throw new ValidationError('A SKU with this name already exists for this type', {
+          sku_name: `a SKU named "${req.body.sku_name}" already exists in this SKU type`,
+        });
+    }
     if (req.body.stm) {
       const st = await one(`SELECT name, serial_eligible FROM sku_types WHERE sku_type_id = $1`, [existing.sku_type_id]);
       if (req.body.stm === 'Serial' && !st.serial_eligible)
@@ -229,20 +296,97 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
         params.push(JSON.stringify(req.body.usb_cable_sku_ids));
         sets.push(`usb_cable_sku_ids = $${params.length}::jsonb`);
       }
-      if (req.body.parent_sku_id !== undefined) {
-        params.push(req.body.parent_sku_id);
-        sets.push(`parent_sku_id = $${params.length}`);
+    }
+
+    // Optional Vendor SKU link reconciliation. When the body carries
+    // vendor_sku_ids (any array, including []), the link set is reconciled:
+    // ids not currently linked are inserted, links no longer in the array are
+    // soft-deleted. Default supplier is preserved when still in the set;
+    // otherwise the first remaining link is promoted.
+    const wantsLinkReconcile = Array.isArray(req.body.vendor_sku_ids);
+    let newVendorSkuIds = [];
+    if (wantsLinkReconcile) {
+      newVendorSkuIds = [
+        ...new Set(req.body.vendor_sku_ids.map(Number).filter(Number.isFinite)),
+      ];
+      if (newVendorSkuIds.length) {
+        const vskus = await many(
+          `SELECT vendor_sku_id, sku_type_id FROM vendor_skus
+            WHERE vendor_sku_id = ANY($1::int[]) AND deleted_at IS NULL`,
+          [newVendorSkuIds]
+        );
+        if (vskus.length !== newVendorSkuIds.length)
+          throw new ValidationError('invalid vendor_sku_ids', { vendor_sku_ids: 'one or more vendor SKUs do not exist' });
+        if (vskus.some((v) => v.sku_type_id && v.sku_type_id !== existing.sku_type_id))
+          throw new ValidationError('vendor SKU type mismatch', { vendor_sku_ids: 'every vendor SKU must be of the same SKU type as this SKU' });
       }
     }
-    if (!sets.length) return res.json(existing);
-    sets.push(`updated_at = NOW()`);
-    params.push(id);
-    const { rows } = await pool.query(
-      `UPDATE skus SET ${sets.join(', ')} WHERE sku_id = $${params.length} RETURNING *`,
-      params
-    );
-    await logChange('SKU', existing.sku_number, req.session, 'Update');
-    res.json(rows[0]);
+
+    if (!sets.length && !wantsLinkReconcile) return res.json(existing);
+    if (sets.length) {
+      sets.push(`updated_at = NOW()`);
+      params.push(id);
+    }
+
+    const updated = await withTransaction(async (client) => {
+      let row = existing;
+      if (sets.length) {
+        const { rows } = await client.query(
+          `UPDATE skus SET ${sets.join(', ')} WHERE sku_id = $${params.length} RETURNING *`,
+          params
+        );
+        row = rows[0];
+        await logChange('SKU', existing.sku_number, req.session, 'Update', client);
+      }
+      if (wantsLinkReconcile) {
+        const { rows: currentLinks } = await client.query(
+          `SELECT sku_vendor_link_id, vendor_sku_id, is_default
+             FROM sku_vendor_links
+            WHERE sku_id = $1 AND deleted_at IS NULL`,
+          [id]
+        );
+        const currentSet = new Set(currentLinks.map((l) => l.vendor_sku_id));
+        const targetSet = new Set(newVendorSkuIds);
+        const toAdd = newVendorSkuIds.filter((v) => !currentSet.has(v));
+        const toRemove = currentLinks.filter((l) => !targetSet.has(l.vendor_sku_id));
+        for (const l of toRemove) {
+          await client.query(
+            `UPDATE sku_vendor_links
+                SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
+              WHERE sku_vendor_link_id = $1`,
+            [l.sku_vendor_link_id]
+          );
+          await logChange('SkuVendorLink', l.sku_vendor_link_id, req.session, 'SoftDelete', client);
+        }
+        for (const vsid of toAdd) {
+          const { rows: lr } = await client.query(
+            `INSERT INTO sku_vendor_links (sku_id, vendor_sku_id, is_default)
+             VALUES ($1, $2, FALSE) RETURNING sku_vendor_link_id`,
+            [id, vsid]
+          );
+          await logChange('SkuVendorLink', lr[0].sku_vendor_link_id, req.session, 'Create', client);
+        }
+        // If no live link has is_default = TRUE but at least one link survives,
+        // promote the first one (by link_id) to default.
+        const { rows: live } = await client.query(
+          `SELECT sku_vendor_link_id, is_default
+             FROM sku_vendor_links
+            WHERE sku_id = $1 AND deleted_at IS NULL
+            ORDER BY sku_vendor_link_id`,
+          [id]
+        );
+        if (live.length && !live.some((l) => l.is_default)) {
+          await client.query(
+            `UPDATE sku_vendor_links SET is_default = TRUE, updated_at = NOW()
+              WHERE sku_vendor_link_id = $1`,
+            [live[0].sku_vendor_link_id]
+          );
+          await logChange('SkuVendorLink', live[0].sku_vendor_link_id, req.session, 'Update', client);
+        }
+      }
+      return row;
+    });
+    res.json(updated);
   } catch (e) { next(e); }
 });
 
@@ -308,162 +452,10 @@ router.post(
   }
 );
 
-// Global list of every (SKU × Vendor) association — drives the "Manage Vendor SKU" screen.
-router.get('/-/vendor-assocs', requireAuth, async (req, res, next) => {
-  try {
-    const { sku_id, vendor_id } = req.query;
-    const where = ['a.deleted_at IS NULL'];
-    const params = [];
-    if (sku_id) { params.push(Number(sku_id)); where.push(`a.sku_id = $${params.length}`); }
-    if (vendor_id) { params.push(Number(vendor_id)); where.push(`a.vendor_id = $${params.length}`); }
-    res.json(await many(
-      `SELECT a.*,
-              s.sku_number, s.sku_name, s.status AS sku_status,
-              st.name AS sku_type_name,
-              v.company_name AS vendor_name, v.status AS vendor_status
-         FROM sku_vendor_assocs a
-         JOIN skus s     ON s.sku_id = a.sku_id
-         JOIN sku_types st ON st.sku_type_id = s.sku_type_id
-         JOIN vendors v  ON v.vendor_id = a.vendor_id
-        WHERE ${where.join(' AND ')}
-        ORDER BY s.sku_number, v.company_name, a.sku_vendor_assoc_id`,
-      params
-    ));
-  } catch (e) { next(e); }
-});
-
-router.get('/:sku_id/vendors', requireAuth, async (req, res, next) => {
-  try {
-    res.json(
-      await many(
-        `SELECT a.*, v.company_name AS vendor_name, v.status AS vendor_status
-           FROM sku_vendor_assocs a JOIN vendors v ON v.vendor_id = a.vendor_id
-          WHERE a.sku_id = $1 AND a.deleted_at IS NULL
-          ORDER BY a.sku_vendor_assoc_id`,
-        [Number(req.params.sku_id)]
-      )
-    );
-  } catch (e) { next(e); }
-});
-
-router.post('/:sku_id/vendors', requireAuth, requireAdmin, async (req, res, next) => {
-  try {
-    const sku_id = Number(req.params.sku_id);
-    const sku = await one(`SELECT sku_number FROM skus WHERE sku_id = $1`, [sku_id]);
-    if (!sku) return res.status(404).json({ error: 'sku_not_found' });
-    required(req.body, ['vendor_id', 'vendor_sku_number']);
-    validatePrices(req.body, { moqKey: 'vendor_sku_price_moq', unitKey: 'vendor_sku_price_unit' });
-    const vendor = await one(`SELECT 1 FROM vendors WHERE vendor_id = $1 AND deleted_at IS NULL`, [req.body.vendor_id]);
-    if (!vendor) throw new ValidationError('invalid vendor_id', { vendor_id: 'must reference an existing, active vendor' });
-    const dup = await one(
-      `SELECT 1 FROM sku_vendor_assocs
-        WHERE sku_id = $1 AND vendor_id = $2 AND vendor_sku_number = $3 AND deleted_at IS NULL`,
-      [sku_id, req.body.vendor_id, req.body.vendor_sku_number]
-    );
-    if (dup) return res.status(409).json({ error: 'duplicate_supplier_row' });
-    const { rows } = await pool.query(
-      `INSERT INTO sku_vendor_assocs (sku_id, vendor_id, vendor_sku_number, vendor_sku_price_moq, vendor_sku_price_unit)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [
-        sku_id, req.body.vendor_id, req.body.vendor_sku_number,
-        req.body.vendor_sku_price_moq || null,
-        req.body.vendor_sku_price_unit || null,
-      ]
-    );
-    await logChange('SKUVendorAssociation', rows[0].sku_vendor_assoc_id, req.session, 'Create');
-    res.status(201).json(rows[0]);
-  } catch (e) { next(e); }
-});
-
-router.patch('/:sku_id/vendors/:assoc_id', requireAuth, requireAdmin, async (req, res, next) => {
-  try {
-    const assoc_id = Number(req.params.assoc_id);
-    const existing = await one(`SELECT * FROM sku_vendor_assocs WHERE sku_vendor_assoc_id = $1`, [assoc_id]);
-    if (!existing) return res.status(404).json({ error: 'not_found' });
-    validatePrices(req.body, { moqKey: 'vendor_sku_price_moq', unitKey: 'vendor_sku_price_unit' });
-    const fields = ['vendor_sku_number', 'vendor_sku_price_moq', 'vendor_sku_price_unit'];
-    const sets = [];
-    const params = [];
-    for (const f of fields) {
-      if (req.body[f] !== undefined) {
-        params.push(req.body[f] === '' ? null : req.body[f]);
-        sets.push(`${f} = $${params.length}`);
-      }
-    }
-    if (!sets.length) return res.json(existing);
-    sets.push(`updated_at = NOW()`);
-    params.push(assoc_id);
-    const { rows } = await pool.query(
-      `UPDATE sku_vendor_assocs SET ${sets.join(', ')} WHERE sku_vendor_assoc_id = $${params.length} RETURNING *`,
-      params
-    );
-    await logChange('SKUVendorAssociation', assoc_id, req.session, 'Update');
-    res.json(rows[0]);
-  } catch (e) { next(e); }
-});
-
-router.get(
-  '/:sku_id/vendors/:assoc_id/specification',
-  requireAuth,
-  async (req, res, next) => {
-    try {
-      const sku_id = Number(req.params.sku_id);
-      const assoc_id = Number(req.params.assoc_id);
-      const row = await one(
-        `SELECT vendor_sku_specification_pdf FROM sku_vendor_assocs
-          WHERE sku_vendor_assoc_id = $1 AND sku_id = $2 AND deleted_at IS NULL`,
-        [assoc_id, sku_id]
-      );
-      if (!row || !row.vendor_sku_specification_pdf || !existsSync(row.vendor_sku_specification_pdf)) {
-        return res.status(404).json({ error: 'not_found' });
-      }
-      res.setHeader('Content-Type', 'application/pdf');
-      res.sendFile(resolve(row.vendor_sku_specification_pdf));
-    } catch (e) { next(e); }
-  }
-);
-
-router.post(
-  '/:sku_id/vendors/:assoc_id/specification',
-  requireAuth,
-  requireAdmin,
-  upload.single('file'),
-  async (req, res, next) => {
-    try {
-      const sku_id = Number(req.params.sku_id);
-      const assoc_id = Number(req.params.assoc_id);
-      const existing = await one(
-        `SELECT * FROM sku_vendor_assocs WHERE sku_vendor_assoc_id = $1 AND sku_id = $2`,
-        [assoc_id, sku_id]
-      );
-      if (!existing || existing.deleted_at) return res.status(404).json({ error: 'not_found' });
-      if (!req.file) return res.status(400).json({ error: 'file_required' });
-      const finalName = `sku-${sku_id}-vendor-${assoc_id}${extname(req.file.originalname) || '.pdf'}`;
-      const finalPath = join(config.uploadDir, finalName);
-      if (existing.vendor_sku_specification_pdf && existsSync(existing.vendor_sku_specification_pdf)) {
-        try { unlinkSync(existing.vendor_sku_specification_pdf); } catch {}
-      }
-      renameSync(req.file.path, finalPath);
-      await pool.query(
-        `UPDATE sku_vendor_assocs SET vendor_sku_specification_pdf = $1, updated_at = NOW()
-          WHERE sku_vendor_assoc_id = $2`,
-        [finalPath, assoc_id]
-      );
-      await logChange('SKUVendorAssociation', assoc_id, req.session, 'Upload');
-      res.json({ ok: true, path: finalPath });
-    } catch (e) { next(e); }
-  }
-);
-
-router.delete('/:sku_id/vendors/:assoc_id', requireAuth, requireAdmin, async (req, res, next) => {
-  try {
-    const assoc_id = Number(req.params.assoc_id);
-    const existing = await one(`SELECT * FROM sku_vendor_assocs WHERE sku_vendor_assoc_id = $1`, [assoc_id]);
-    if (!existing || existing.deleted_at) return res.status(404).json({ error: 'not_found' });
-    await pool.query(`UPDATE sku_vendor_assocs SET deleted_at = NOW() WHERE sku_vendor_assoc_id = $1`, [assoc_id]);
-    await logChange('SKUVendorAssociation', assoc_id, req.session, 'SoftDelete');
-    res.json({ ok: true });
-  } catch (e) { next(e); }
-});
+// Per spec §8.3.b: the sku_vendor_links table is internal-only. There are
+// intentionally no GET / POST / PATCH / DELETE / restore routes on
+// /skus/{sku_id}/vendor-skus. Links are inserted only by POST /skus above and
+// soft-deleted only as a cascade when their referenced Vendor SKU is
+// soft-deleted (see routes/vendorSkus.js).
 
 export default router;

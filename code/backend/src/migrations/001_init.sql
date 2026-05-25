@@ -99,16 +99,6 @@ CREATE TABLE IF NOT EXISTS sku_types (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sku_types_name_ci
   ON sku_types (LOWER(name)) WHERE deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS terminal_parent_skus (
-  parent_sku_id     SERIAL PRIMARY KEY,
-  parent_sku_number TEXT NOT NULL UNIQUE,
-  name              TEXT NOT NULL,
-  description       TEXT,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_tps_name_ci ON terminal_parent_skus (LOWER(name));
-
 CREATE TABLE IF NOT EXISTS skus (
   sku_id              SERIAL PRIMARY KEY,
   sku_number          TEXT NOT NULL UNIQUE,
@@ -120,7 +110,6 @@ CREATE TABLE IF NOT EXISTS skus (
   approx_price_moq    INTEGER,
   approx_price_unit   NUMERIC,
   status              TEXT NOT NULL DEFAULT 'Active',
-  parent_sku_id       INTEGER REFERENCES terminal_parent_skus(parent_sku_id),
   adaptor_sku_ids     JSONB,
   usb_cable_sku_ids   JSONB,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -128,20 +117,9 @@ CREATE TABLE IF NOT EXISTS skus (
   deleted_at          TIMESTAMPTZ
 );
 
-CREATE TABLE IF NOT EXISTS sku_vendor_assocs (
-  sku_vendor_assoc_id         SERIAL PRIMARY KEY,
-  sku_id                      INTEGER NOT NULL REFERENCES skus(sku_id),
-  vendor_id                   INTEGER NOT NULL REFERENCES vendors(vendor_id),
-  vendor_sku_number           TEXT NOT NULL,
-  vendor_sku_specification_pdf TEXT,
-  vendor_sku_price_moq        INTEGER,
-  vendor_sku_price_unit       NUMERIC,
-  created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  deleted_at                  TIMESTAMPTZ
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sva_unique
-  ON sku_vendor_assocs(sku_id, vendor_id, vendor_sku_number) WHERE deleted_at IS NULL;
+-- The vendor↔Innoviti-SKU relationship lives in vendor_skus + sku_vendor_links
+-- (migration 008). The original sku_vendor_assocs table was dropped — see
+-- migration 010.
 
 CREATE TABLE IF NOT EXISTS locations (
   location_id          SERIAL PRIMARY KEY,

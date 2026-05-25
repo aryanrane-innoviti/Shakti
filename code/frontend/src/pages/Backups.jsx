@@ -9,6 +9,7 @@ export default function Backups() {
   const [name, setName] = useState('');
   const [confirmRestore, setConfirmRestore] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const load = () => api.get('/backup').then(setFiles);
   useEffect(() => { load(); }, []);
@@ -29,6 +30,18 @@ export default function Backups() {
       const r = await api.post('/backup/restore', { filename: f.name });
       toast.push(r.note || 'Restored', 'success');
     } catch (e) { toast.push(`Failed: ${e.data?.error || e.message}`, 'error'); }
+  };
+
+  const doReset = async () => {
+    setConfirmReset(false);
+    try {
+      const r = await api.post('/backup/reset');
+      load();
+      toast.push(r.note || 'Database reset to seeded values', 'success');
+    } catch (e) {
+      const detail = e.data?.message || e.data?.error || e.message;
+      toast.push(`Reset failed: ${detail}`, 'error');
+    }
   };
 
   const doDelete = async () => {
@@ -89,6 +102,16 @@ export default function Backups() {
         )}
       </div>
 
+      <div className="card" style={{ marginTop: 'var(--r-5)' }}>
+        <h3>Reset database</h3>
+        <p className="help-text">
+          Wipes all data and restores the database to its original seeded values
+          (default user types, vendor types, SKU types and the Super Admin account).
+          Use this to get a clean slate before testing a backup upload.
+        </p>
+        <button className="danger" onClick={() => setConfirmReset(true)}>Reset to seeded state</button>
+      </div>
+
       {confirmRestore && (
         <ConfirmModal
           title="Overwrite database?"
@@ -97,6 +120,17 @@ export default function Backups() {
           danger
           onClose={() => setConfirmRestore(null)}
           onConfirm={doRestore}
+        />
+      )}
+
+      {confirmReset && (
+        <ConfirmModal
+          title="Reset database?"
+          message="This permanently deletes ALL data and restores the database to its original seeded values. This cannot be undone — create a backup first if you need the current data."
+          confirmLabel="Reset to seed"
+          danger
+          onClose={() => setConfirmReset(false)}
+          onConfirm={doReset}
         />
       )}
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
+import GlobalLoader from '../components/GlobalLoader.jsx';
 
 export default function Reset() {
   const [params] = useSearchParams();
@@ -56,6 +57,7 @@ export default function Reset() {
 
   return (
     <div className="auth-shell">
+      <GlobalLoader />
       <section className="auth-poster">
         <div className="topline"><span className="pip" /> Password Reset</div>
         <div>

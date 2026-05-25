@@ -3,7 +3,7 @@ import { api } from '../lib/api.js';
 
 const OBJECT_TYPES = [
   'User', 'UserType', 'Contact', 'Vendor', 'VendorType',
-  'SKU', 'SKUType', 'SKUVendorAssociation', 'TerminalParentSKU', 'Location',
+  'SKU', 'SKUType', 'SKUVendorAssociation', 'Location',
 ];
 
 export default function ChangeLog() {

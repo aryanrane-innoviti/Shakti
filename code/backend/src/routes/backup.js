@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool, getBackupPool } from '../db.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
+import { runSeed } from '../lib/seed.js';
 
 const router = Router();
 
@@ -116,12 +117,12 @@ const SNAPSHOT_TABLES = [
   'user_types',
   'vendor_types',
   'sku_types',
-  'terminal_parent_skus',
   'vendors',
   'users',
   'contacts',
   'skus',
-  'sku_vendor_assocs',
+  'vendor_skus',
+  'sku_vendor_links',
   'locations',
   'change_log',
   'sessions',
@@ -134,12 +135,12 @@ const SERIAL_COLS = {
   user_types: 'user_type_id',
   vendor_types: 'vendor_type_id',
   sku_types: 'sku_type_id',
-  terminal_parent_skus: 'parent_sku_id',
   vendors: 'vendor_id',
   users: 'user_id',
   contacts: 'contact_id',
   skus: 'sku_id',
-  sku_vendor_assocs: 'sku_vendor_assoc_id',
+  vendor_skus: 'vendor_sku_id',
+  sku_vendor_links: 'sku_vendor_link_id',
   locations: 'location_id',
   change_log: 'change_log_id',
 };
@@ -289,6 +290,27 @@ async function restoreSnapshot(name) {
   }
 }
 
+// Wipes every live table and re-runs the seed so the database is left in the
+// exact post-install state — used to get a clean slate before testing a
+// backup upload/restore.
+async function resetToSeed() {
+  const live = await pool.connect();
+  try {
+    await live.query('BEGIN');
+    const list = SNAPSHOT_TABLES.map((t) => `"${t}"`).join(', ');
+    await live.query(`TRUNCATE ${list} RESTART IDENTITY CASCADE`);
+    await live.query('COMMIT');
+  } catch (e) {
+    await live.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    live.release();
+  }
+  // runSeed() opens its own transaction; safe to call after the truncate
+  // commits. It is idempotent, so a retry after a partial failure is fine.
+  await runSeed();
+}
+
 router.get('/', requireAuth, requireRole('SA'), async (req, res, next) => {
   try {
     const bp = getBackupPool();
@@ -344,6 +366,18 @@ router.post('/restore', requireAuth, requireRole('SA'), async (req, res, next) =
     if (e.code === 'BACKUP_DB_DISABLED') {
       return res.status(503).json({ error: 'backup_db_not_configured' });
     }
+    next(e);
+  }
+});
+
+router.post('/reset', requireAuth, requireRole('SA'), async (req, res, next) => {
+  try {
+    await resetToSeed();
+    res.json({
+      ok: true,
+      note: 'Database reset to seeded values. Active sessions were invalidated — sign in again.',
+    });
+  } catch (e) {
     next(e);
   }
 });

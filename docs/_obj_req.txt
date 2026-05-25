@@ -155,26 +155,21 @@ o   None: If units of an SKU are indistinguishable. Example cables.
 •        In case the SKU Type is a Payment Terminal, then the following two additional fields need to be selected:
 o   Associated Adaptor SKU Name (compulsory): The adaptor to be used with this SKU (from Adaptor picklist). This can be multi select, and all the adaptors selected will show.
 o   Associated USB Cable Name (compulsory): The USB cable to be used with this SKU (from USB cable picklist). This can be multi select and all the adaptors selected will show.
-o   Parent SKU Name (compulsory): This is a pick from the Terminal Parent SKU object.
 •        Specifications – PDF document prepared by Innoviti with all details of the SKU as required to order.
 •        Approximate price per unit (MOQ, unit price)
 •        Status: Active, Inactive (for old SKUs that are no longer in use).
 •        SKU Vendor (picklist from SKU Vendor list) ….Mandatory
  
-1.4.3 Association of SKU with SKU Vendors
-For each SKU, Vendors need to be associated. One SKU can have multiple Vendors associated. This association happens inside the SKU definition. The following fields need to be defined in the association:
-•        Vendor SKU number – this is the part number that the vendor uses.
+1.4.3 Vendor SKUs and their association with SKUs
+A Vendor SKU is a vendor's own product, defined once independently of any Innoviti SKU. A Vendor SKU can supply more than one Innoviti SKU, and an Innoviti SKU can have more than one Vendor SKU associated with it — the relationship is many-to-many, managed from the SKU definition. Each Vendor SKU has the following fields:
+•        Vendor SKU number – the part number that the vendor uses; unique within that vendor.
+•        Vendor SKU name – the vendor's name for the part.
 •        Vendor SKU specification – PDF provided by the vendor for that part.
-•        Vendor SKU price (MOQ, unit price)
+•        Vendor SKU price (MOQ, unit price).
+•        Status: Active, Inactive.
+For each Innoviti SKU, one of its associated Vendor SKUs may be marked as the default supplier.
  
-1.5 Terminal Parent SKU
-Terminal Parent SKU is a logical association between Terminal type SKUs and a Terminal Parent SKU.
-Every Terminal Parent SKU has the following fields defined:
-•        Terminal Parent SKU number   starting with PNN (5 digit number starting with 10001).
-•        Terminal Parent SKU name – this is for easier recall of the Terminal Parent SKU.
-•        Terminal Parent SKU Description – a text box to describe the part.
- 
-1.6 Inventory Locations
+1.5 Inventory Locations
 At any point of time every inventory item has to be in the location of a vendor. During transit the state and not the location of the asset changes, the location changing only after it is received at the destination. Each location has to be tagged to a vendor, and each location has a principal contact and secondary contact defined.
 The following are the fields for every Location:
 •        Location Index (auto incremented, starting with LIN (8 digits, starting with 10000001).
