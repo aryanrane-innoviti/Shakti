@@ -50,6 +50,37 @@ function validatePrices(body) {
   }
 }
 
+// A vendor SKU number is bound to a single name across the WHOLE catalogue: the
+// same number must always carry the same name, regardless of which vendor stocks
+// it (two vendors may share a number only when the name agrees). This is a
+// cross-row functional dependency the per-vendor unique index can't express, so
+// we guard it here on every write that sets a number/name. `excludeId` skips the
+// row being updated/restored.
+async function assertNameBinding({ vendor_sku_number, vendor_sku_name, excludeId = null }, client) {
+  const number = vendor_sku_number;
+  if (number === undefined || number === null || number === '') return;
+  const norm = (s) => (s === undefined || s === null || s === '' ? null : String(s).trim());
+  const name = norm(vendor_sku_name);
+  const { rows } = await (client || pool).query(
+    `SELECT DISTINCT vendor_sku_name
+       FROM vendor_skus
+      WHERE vendor_sku_number = $1
+        AND deleted_at IS NULL
+        AND ($2::int IS NULL OR vendor_sku_id <> $2)`,
+    [number, excludeId]
+  );
+  for (const r of rows) {
+    const existing = norm(r.vendor_sku_name);
+    if (existing !== name) {
+      const shown = existing ?? '(no name)';
+      throw new ValidationError(
+        `Vendor SKU number '${number}' is already in use with the name '${shown}'. The same number must use the same name — set the name to '${shown}', or use a different number.`,
+        { vendor_sku_name: `must be '${shown}' for number '${number}'` }
+      );
+    }
+  }
+}
+
 // SELECT fragment that attaches the vendor name and the vendor SKU's SKU Type
 // name. Per spec §8.3.b the sku_vendor_links table is internal-only, so the
 // list of Innoviti SKUs each vendor SKU is linked to is NOT surfaced here.
@@ -102,6 +133,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
       [req.body.vendor_id, req.body.vendor_sku_number]
     );
     if (dup) return res.status(409).json({ error: 'duplicate_vendor_sku' });
+    await assertNameBinding({ vendor_sku_number: req.body.vendor_sku_number, vendor_sku_name: req.body.vendor_sku_name });
     const { rows } = await pool.query(
       `INSERT INTO vendor_skus
          (vendor_id, sku_type_id, vendor_sku_number, vendor_sku_name, vendor_sku_price_moq, vendor_sku_price_unit)
@@ -132,6 +164,15 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
         [existing.vendor_id, req.body.vendor_sku_number, id]
       );
       if (dup) return res.status(409).json({ error: 'duplicate_vendor_sku' });
+    }
+    // Enforce the number↔name binding whenever either is being set, using the
+    // effective values (the incoming change merged over what's already stored).
+    if (req.body.vendor_sku_number !== undefined || req.body.vendor_sku_name !== undefined) {
+      await assertNameBinding({
+        vendor_sku_number: req.body.vendor_sku_number !== undefined ? req.body.vendor_sku_number : existing.vendor_sku_number,
+        vendor_sku_name: req.body.vendor_sku_name !== undefined ? req.body.vendor_sku_name : existing.vendor_sku_name,
+        excludeId: id,
+      });
     }
     const fields = ['vendor_sku_number', 'vendor_sku_name', 'vendor_sku_price_moq', 'vendor_sku_price_unit'];
     const sets = [];
@@ -175,18 +216,26 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
     // non-deleted sku_vendor_links rows that reference it, in the same
     // transaction. The link table is internal-only — no 409 guard surfaced.
     await withTransaction(async (client) => {
+      // Soft-delete every live link in one set-based UPDATE, then log them all
+      // in one multi-row INSERT — instead of 1 + 2N round-trips for N links.
       const { rows: links } = await client.query(
-        `SELECT sku_vendor_link_id FROM sku_vendor_links
-          WHERE vendor_sku_id = $1 AND deleted_at IS NULL`,
+        `UPDATE sku_vendor_links
+            SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
+          WHERE vendor_sku_id = $1 AND deleted_at IS NULL
+          RETURNING sku_vendor_link_id`,
         [id]
       );
-      for (const l of links) {
+      if (links.length) {
         await client.query(
-          `UPDATE sku_vendor_links SET deleted_at = NOW(), is_default = FALSE, updated_at = NOW()
-            WHERE sku_vendor_link_id = $1`,
-          [l.sku_vendor_link_id]
+          `INSERT INTO change_log (object_type, object_id, actor_user_id, actor_user_index, action)
+             SELECT 'SkuVendorLink', link_id::text, $1, $2, 'SoftDelete'
+               FROM unnest($3::int[]) AS link_id`,
+          [
+            req.session?.user_id ?? null,
+            req.session?.user_index ?? null,
+            links.map((l) => l.sku_vendor_link_id),
+          ]
         );
-        await logChange('SkuVendorLink', l.sku_vendor_link_id, req.session, 'SoftDelete', client);
       }
       await client.query(
         `UPDATE vendor_skus SET deleted_at = NOW(), status = 'Inactive' WHERE vendor_sku_id = $1`,
@@ -210,6 +259,11 @@ router.post('/:id/restore', requireAuth, requireAdmin, async (req, res, next) =>
       [existing.vendor_id, existing.vendor_sku_number, id]
     );
     if (dup) return res.status(409).json({ error: 'duplicate_vendor_sku' });
+    await assertNameBinding({
+      vendor_sku_number: existing.vendor_sku_number,
+      vendor_sku_name: existing.vendor_sku_name,
+      excludeId: id,
+    });
     await pool.query(
       `UPDATE vendor_skus SET deleted_at = NULL, updated_at = NOW() WHERE vendor_sku_id = $1`,
       [id]

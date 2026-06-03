@@ -3,14 +3,10 @@ import { pool, one, many } from '../db.js';
 import { requireAuth, requireAdmin, requireAdminRead } from '../lib/auth.js';
 import { logChange } from '../lib/changeLog.js';
 import { nextIndex } from '../lib/ids.js';
+import { getInnovitiVendorId } from '../lib/seedRefs.js';
 import { GSTIN_RE, PINCODE_RE, ValidationError, required } from '../lib/validate.js';
 
 const router = Router();
-
-async function getInnovitiId() {
-  const r = await one(`SELECT vendor_id FROM vendors WHERE company_name = 'Innoviti' AND is_seed = TRUE`);
-  return r ? r.vendor_id : null;
-}
 
 function blockNonSAFromSeed(req, res, isSeed) {
   if (isSeed && req.session.user_type_code !== 'SA') {
@@ -60,7 +56,7 @@ router.get('/:id/contacts', requireAuth, async (req, res, next) => {
 async function validate(body, { existing, isCreate, vendorId } = {}) {
   if (isCreate) required(body, ['company_name', 'vendor_type_id']);
   const errors = {};
-  const innovitiId = await getInnovitiId();
+  const innovitiId = await getInnovitiVendorId();
   const isInnoviti = vendorId && vendorId === innovitiId;
   const gst = body.gst_number ?? existing?.gst_number;
   if (!isInnoviti) {
@@ -174,12 +170,15 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res, next) => {
     const existing = await one(`SELECT * FROM vendors WHERE vendor_id = $1`, [id]);
     if (!existing || existing.deleted_at) return res.status(404).json({ error: 'not_found' });
     if (existing.is_seed) return res.status(409).json({ error: 'cannot_delete_innoviti_seed' });
-    const dependents = {
-      users: await many(`SELECT user_id, user_index FROM users WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
-      contacts: await many(`SELECT contact_id, contact_index FROM contacts WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
-      locations: await many(`SELECT location_id, location_index FROM locations WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
-      vendor_skus: await many(`SELECT vendor_sku_id FROM vendor_skus WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
-    };
+    // The four dependency checks are independent reads — run them concurrently
+    // so the handler waits on the slowest, not the sum of all four.
+    const [users, contacts, locations, vendor_skus] = await Promise.all([
+      many(`SELECT user_id, user_index FROM users WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
+      many(`SELECT contact_id, contact_index FROM contacts WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
+      many(`SELECT location_id, location_index FROM locations WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
+      many(`SELECT vendor_sku_id FROM vendor_skus WHERE vendor_id = $1 AND deleted_at IS NULL`, [id]),
+    ]);
+    const dependents = { users, contacts, locations, vendor_skus };
     const hasAny = Object.values(dependents).some((arr) => arr.length > 0);
     if (hasAny) return res.status(409).json({ error: 'has_dependents', dependents });
     await pool.query(`UPDATE vendors SET deleted_at = NOW(), status = 'Inactive' WHERE vendor_id = $1`, [id]);

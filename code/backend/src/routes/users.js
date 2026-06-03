@@ -13,6 +13,7 @@ import {
 const requireUserWrite = requireRole('SA', 'ADMIN');
 import { logChange } from '../lib/changeLog.js';
 import { nextIndex } from '../lib/ids.js';
+import { getInnovitiVendorId } from '../lib/seedRefs.js';
 import { config } from '../config.js';
 import {
   NAME_RE,
@@ -25,13 +26,6 @@ import {
 } from '../lib/validate.js';
 
 const router = Router();
-
-async function getInnovitiVendorId() {
-  const r = await one(
-    `SELECT vendor_id FROM vendors WHERE company_name = 'Innoviti' AND is_seed = TRUE`
-  );
-  return r ? r.vendor_id : null;
-}
 
 async function isSAUser(userId) {
   const r = await one(
@@ -76,12 +70,14 @@ router.get('/', requireAuth, requireAdminRead, async (req, res, next) => {
     const sql = `
       SELECT u.user_id, u.user_index, u.first_name, u.last_name, u.email, u.mobile, u.status,
              u.vendor_id, u.employee_id, u.address_line_1, u.address_line_2,
-             u.pincode, u.city, u.state, u.user_type_id,
+             u.pincode, u.city, u.state, u.user_type_id, u.location_id,
              ut.code AS user_type_code, ut.label AS user_type_label,
-             v.company_name AS vendor_name, v.status AS vendor_status
+             v.company_name AS vendor_name, v.status AS vendor_status,
+             l.location_name AS location_name, l.location_index AS location_index
         FROM users u
         JOIN user_types ut ON ut.user_type_id = u.user_type_id
         LEFT JOIN vendors v ON v.vendor_id = u.vendor_id
+        LEFT JOIN locations l ON l.location_id = u.location_id
         ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
        ORDER BY u.user_id`;
     res.json(await many(sql, params));
@@ -92,10 +88,12 @@ router.get('/:id', requireAuth, requireAdminRead, async (req, res, next) => {
   try {
     const row = await one(
       `SELECT u.*, ut.code AS user_type_code, ut.label AS user_type_label,
-              v.company_name AS vendor_name, v.status AS vendor_status
+              v.company_name AS vendor_name, v.status AS vendor_status,
+              l.location_name AS location_name, l.location_index AS location_index
          FROM users u
          JOIN user_types ut ON ut.user_type_id = u.user_type_id
          LEFT JOIN vendors v ON v.vendor_id = u.vendor_id
+         LEFT JOIN locations l ON l.location_id = u.location_id
         WHERE u.user_id = $1`,
       [Number(req.params.id)]
     );
@@ -181,9 +179,24 @@ router.post('/', requireAuth, requireUserWrite, async (req, res, next) => {
     if (emailDup)
       return res.status(409).json({ error: 'Email already in use', fields: { email: 'another user already has this email' } });
 
+    // employee_id carries a partial unique index (idx_users_employee_id, over
+    // active users). Pre-check it so a clash returns a friendly 409 instead of
+    // a raw unique-violation 500.
+    if (employee_id) {
+      const empDup = await one(
+        `SELECT 1 FROM users WHERE employee_id = $1 AND deleted_at IS NULL`,
+        [employee_id]
+      );
+      if (empDup)
+        return res.status(409).json({ error: 'Employee ID already in use', fields: { employee_id: 'another active user already has this Employee ID' } });
+    }
+
     const hash = password ? hashPassword(password) : null;
     const idx = await nextIndex('user');
 
+    // ASO users carry no address (task1.md §3): the form hides the section and
+    // the API silently drops any address payload for an ASO.
+    const aso = ut.code === 'ASO';
     const { rows } = await pool.query(
       `INSERT INTO users (user_index, first_name, last_name, user_type_id, password_hash, email, mobile,
                           vendor_id, employee_id, address_line_1, address_line_2, pincode, city, state, status)
@@ -191,8 +204,8 @@ router.post('/', requireAuth, requireUserWrite, async (req, res, next) => {
       [
         idx, first_name, last_name, user_type_id, hash, email, mobile || null,
         resolvedVendorId, employee_id || null,
-        address_line_1 || null, address_line_2 || null,
-        pincode || null, city || null, state || null,
+        aso ? null : (address_line_1 || null), aso ? null : (address_line_2 || null),
+        aso ? null : (pincode || null), aso ? null : (city || null), aso ? null : (state || null),
       ]
     );
     await logChange('User', idx, req.session, 'Create');
@@ -210,9 +223,24 @@ router.patch('/:id', requireAuth, requireUserWrite, async (req, res, next) => {
     }
     validateUserPayload(req.body, { isCreate: false, existing });
 
+    // Same partial-unique guard as create: reject a clashing employee_id with a
+    // friendly 409 rather than letting the index throw a 500. Exclude self.
+    if (req.body.employee_id) {
+      const empDup = await one(
+        `SELECT 1 FROM users WHERE employee_id = $1 AND deleted_at IS NULL AND user_id <> $2`,
+        [req.body.employee_id, id]
+      );
+      if (empDup)
+        return res.status(409).json({ error: 'Employee ID already in use', fields: { employee_id: 'another active user already has this Employee ID' } });
+    }
+
+    // ASO users carry no address (task1.md §3) — drop any address fields from
+    // the update so they can't be set via PATCH.
+    const existingType = await one(`SELECT code FROM user_types WHERE user_type_id = $1`, [existing.user_type_id]);
+    const ADDRESS_FIELDS = ['address_line_1', 'address_line_2', 'pincode', 'city', 'state'];
     const fields = [
       'first_name', 'last_name', 'email', 'mobile', 'vendor_id', 'employee_id',
-      'address_line_1', 'address_line_2', 'pincode', 'city', 'state',
+      ...(existingType?.code === 'ASO' ? [] : ADDRESS_FIELDS),
     ];
     const sets = [];
     const params = [];

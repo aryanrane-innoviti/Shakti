@@ -27,6 +27,10 @@ export function subscribeLoading(fn) {
 }
 
 async function request(method, path, body, opts = {}) {
+  // `silent` keeps a request out of the global loader — for rapid background
+  // writes (e.g. audit counter +/-) where a spinner is more distracting than
+  // helpful. It is NOT a fetch option, so pull it out before spreading.
+  const { silent = false, ...fetchOpts } = opts;
   const headers = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -37,10 +41,9 @@ async function request(method, path, body, opts = {}) {
     headers['Content-Type'] = 'application/json';
     payload = JSON.stringify(body);
   }
-  activeRequests += 1;
-  notifyLoading();
+  if (!silent) { activeRequests += 1; notifyLoading(); }
   try {
-    const res = await fetch(BASE + path, { method, headers, body: payload, ...opts });
+    const res = await fetch(BASE + path, { method, headers, body: payload, ...fetchOpts });
     const text = await res.text();
     const data = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
     if (!res.ok) {
@@ -53,16 +56,16 @@ async function request(method, path, body, opts = {}) {
     }
     return data;
   } finally {
-    activeRequests -= 1;
-    notifyLoading();
+    if (!silent) { activeRequests -= 1; notifyLoading(); }
   }
 }
 
 export const api = {
-  get: (p) => request('GET', p),
-  post: (p, b) => request('POST', p, b),
-  patch: (p, b) => request('PATCH', p, b),
-  del: (p) => request('DELETE', p),
+  get: (p, opts) => request('GET', p, undefined, opts),
+  post: (p, b, opts) => request('POST', p, b, opts),
+  patch: (p, b, opts) => request('PATCH', p, b, opts),
+  put: (p, b, opts) => request('PUT', p, b, opts),
+  del: (p, opts) => request('DELETE', p, undefined, opts),
   upload: (p, file) => {
     const fd = new FormData();
     fd.append('file', file);

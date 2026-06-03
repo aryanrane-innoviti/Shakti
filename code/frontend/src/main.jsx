@@ -25,10 +25,14 @@ import ChangeLog      from './pages/ChangeLog.jsx';
 import Backups        from './pages/Backups.jsx';
 import LoadStock      from './pages/LoadStock.jsx';
 import Stock          from './pages/Stock.jsx';
+import Audit              from './pages/Audit.jsx';
 
 import './styles.css';
 
 function HomeRedirect() {
+  const { user } = useAuth();
+  // ASO users have no Dashboard access — land them on their Audit screen.
+  if (user?.user_type_code === 'ASO') return <Navigate to="/audit" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -92,6 +96,10 @@ function App() {
             {/* Phase 2 — Load Stock (ADMIN only) */}
             <Route path="load-stock"          element={<RoleGate allow={['ADMIN']}><LoadStock /></RoleGate>} />
             <Route path="stock"               element={<RoleGate allow={['ADMIN']}><Stock /></RoleGate>} />
+
+            {/* Phase 3 (ASO slice) — ASO audit screen. ASO-location assignment
+                lives on the Locations Modify form (Assign ASO Users panel). */}
+            <Route path="audit"               element={<RoleGate allow={['ASO']}><Audit /></RoleGate>} />
           </Route>
 
           <Route path="*" element={<HomeRedirect />} />

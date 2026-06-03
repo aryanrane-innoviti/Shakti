@@ -22,6 +22,8 @@ import pincodeRoutes from './routes/pincode.js';
 import dashboardRoutes from './routes/dashboard.js';
 import loadRoutes from './routes/loads.js';
 import stockRoutes from './routes/stock.js';
+import auditSessionRoutes, { runAuditSuspensionJob } from './routes/auditSessions.js';
+import accessoryStockRoutes from './routes/accessoryStock.js';
 
 async function main() {
   await initDb();
@@ -51,6 +53,11 @@ async function main() {
   app.use('/dashboard', dashboardRoutes);
   app.use('/loads', loadRoutes);
   app.use('/stock', stockRoutes);
+  // Phase 3 ASO slice. The ASO's audit location lives on users.location_id
+  // (assigned via PUT /locations/:id/assigned-users) — there is no separate
+  // audit-location router.
+  app.use('/audit-sessions', auditSessionRoutes);
+  app.use('/accessory-stock', accessoryStockRoutes);
 
   app.use((err, req, res, _next) => {
     if (err instanceof ValidationError) {
@@ -64,6 +71,14 @@ async function main() {
   setInterval(() => {
     takeDailySnapshot().catch((e) => console.error('daily snapshot failed', e.message));
   }, DAY_MS);
+
+  // Phase 3 ASO: every 5 minutes, mark Incomplete audit sessions whose last
+  // activity is >30 minutes old as auto-suspended. Same pattern as the daily
+  // snapshot above — single-instance scheduler, no extra deps.
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+  setInterval(() => {
+    runAuditSuspensionJob().catch((e) => console.error('audit suspension job failed', e.message));
+  }, FIVE_MIN_MS);
 
   app.listen(config.port, () => {
     console.log(`Shakti backend listening on http://localhost:${config.port}`);

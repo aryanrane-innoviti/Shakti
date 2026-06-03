@@ -6,6 +6,7 @@ const STARTS = {
   vendor: { prefix: 'VEN', start: 10001, pad: 5 },
   sku: { prefix: 'INN', start: 10001, pad: 5 },
   location: { prefix: 'LIN', start: 10000001, pad: 8 },
+  audit: { prefix: 'AIN', start: 10001, pad: 5 },
 };
 
 export async function nextIndex(kind, client) {

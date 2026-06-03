@@ -1,0 +1,498 @@
+﻿
+
+
+3.2 Audit Session —Store User
+Upon clicking the Audit tab at the top, the user is taken to an audit screen. 
+In case for that user there was an Incomplete audit session, then the session Provisional Audit Report (PAR) is shown and the user can continue their audit.
+In case there was a Pending audit session, then an error pops up:
+"Previous audit <AIN> is awaiting Admin review. Cannot start a new audit by the same user until the previous audit review is closed."  This block is released as soon as a Admin user Approves or Rejects a Pending Review session.
+In case there was no Incomplete or Pending Review audit session, then on the screen a button - "Start Audit Session — User Name Audit Index, where Audit Index starts with AIN-(10001, 5 digit auto incremented number starting with 10001)." He clicks on it and the button changes to "Complete Audit Session <Audit Index>".   Next to it another button opens “Cancel Audit Session <Audit Index>”.
+The store user has 4 storage areas within his location where the SKUs stored need to be audited.  Each storage area is marked by the status of the SKUs.
+The audit is carried out for each storage area by selecting the correct tab below “Complete Audit Session <AIN Index>.  The following tabs appear
+Working: All working SKUs
+Retrieved Not Inspected: All SKUs retrieved from ASOs or Merchants but not inspected.
+Under Repair: All SKUs to be/being repaired.
+Scrapped: All SKUs to be scrapped.
+Repaired Not Inspected: All SKUs repaired but not yet inspected.
+3.2.1 Audit Table 1: Working Area
+The user presses the Working tab.
+A new screen opens with the following content:
+Provisional Audit Report (PAR) <Audit Index>  Table 1 for Working Serial Type SKUs: Payment Terminals, Base Stations, and SIM Cards.
+Below that the instruction: Scan or punch in the S.No. of any of the above type of SKUs. 
+Below that a scan window appears for punching in or scanning in the Serial Number. Next to the window is a Submit button.  
+Below that the following Table 1 opens, with a header Table 1 (Working Serial Type SKUs): Payment Terminals, Base Stations, and SIM cards audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item S.No.
+Unexpected Item S.No.
+Unregistered Item S.No.
+Matched
+Missing
+Remarks
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU of Serial type and for each S.No. of that vendor SKU that is expected with the user carrying out the audit, and whose Status in the Payment Terminal Master is marked as “Working” an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item S.No. is populated.
+The other columns are empty.
+Only active SKUs are listed.
+
+User scans or punches in the S.No. of any of the above kind of SKUs from the Working area .  He then presses Submit.  The following actions happen:
+
+The S.No. is first matched against the entries in the table, if it matches then a green tick is put against that row.  
+If it doesn’t match then it is searched against the Payment Terminal Master, the Base Station Master, and the SIM Card Master.  If it matches against any entry in any of these masters, then a row is inserted in Table 1 and the Vendor SKU Name, Vendor SKU Number of the entry are inserted in the respective columns of Table 1.  The S.No. is inserted under the Unexpected Item S.No. column. A green tick is put under Matched column. Under Remarks the following text is inserted:
+If the item location in the master was different from the location from which the audit is being done, then “Wrong Location” is inserted.
+If the item status was “Lost” in the masters then “Recovered” is also inserted in the Remarks column.
+If the 
+If the search in 2) above does not yield a match then another row is inserted in Table 1 and the S.No. scanned is inserted under the column “Unregistered Item S.No.”.  
+
+Duplicate scan protection: If the same serial number is scanned twice during the same audit session, the second scan is rejected and an error message comes up: "<S.No.> has already been audited in this session." 
+
+Once the user has scanned in all the Serial type SKUs they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The scan window is disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the scan window is again activated.   If a user presses Submit, all the S.No. that were not Matched show a red X in the Missing S.No. column.   If the Modify button is pressed then the red X disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button, a Table 2 opens below
+
+3.2.2 Audit Table 2: Working Area
+
+Provisional Audit Report (PAR) <Audit Index>  Table 2 for Working Accessories.
+Below that the instruction, increment the count. 
+Below that the following Table 2 opens, with a header Table 2 (Working Accessories) audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item Qty
+Working Count
+Missing Count
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU that is not of Serial type an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item Qty basis the masters is populated.
+If the Expected Item Qty is zero, the same is shown.
+The other columns are empty.
+Only active SKUs are listed.
+
+User can see an increment, decrement counter with the value of the counter being shown in the middle in “Working Count” column. The following actions happen:
+
+The user increments the count of a working accessory against that row under the Working column.
+Once the user has updated the count of all SKUs, they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The counters are disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the counters appear again.  If a user presses Submit, the difference between Expected Item Count and Working + Not Working is shown under Missing Count. If the Modify button is pressed then the Missing Count disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button on Table 2 they can go to the top of the screen and click on “Complete Audit Session <AIN Index>. This will pop-up a confirmation screen, after confirmation the PAR is stored and appears as a link under Audit Reports section in the Reports Tab.  
+
+ At any time the user can press the “Cancel Audit Session <AIN Index> button.  This will pop-up for a confirmation screen and if pressed the session is cancelled and the PAR created is not stored.  It is not visible in Audit Reports also.
+
+3.2.3 Audit Table 1: Retrieved Not Inspected
+The user presses the Retrieved Not Inspected tab.
+A new screen opens with the following content:
+Provisional Audit Report (PAR) <Audit Index>  Table 1 for Retrieved Not Inspected Serial Type SKUs: Payment Terminals, Base Stations, and SIM Cards.
+Below that the instruction: Scan or punch in the S.No. of any of the above type of SKUs. 
+Below that a scan window appears for punching in or scanning in the Serial Number. Next to the window is a Submit button.  
+Below that the following Table 1 opens, with a header Table 1 (Retrieved Not Inspected Serial Type SKUs): Payment Terminals, Base Stations, and SIM cards audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item S.No.
+Unexpected Item S.No.
+Unregistered Item S.No.
+Matched
+Missing
+Remarks
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU of Serial type and for each S.No. of that vendor SKU that is expected with the user carrying out the audit, and whose Status in the Payment Terminal Master is marked as “Retrieved Not Inspected” an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item S.No. is populated.
+The other columns are empty.
+Only active SKUs are listed.
+
+User scans or punches in the S.No. of any of the above kind of SKUs from the Retrieved Not Inspected area .  He then presses Submit.  The following actions happen:
+
+The S.No. is first matched against the entries in the table, if it matches then a green tick is put against that row.  
+If it doesn’t match then it is searched against the Payment Terminal Master, the Base Station Master, and the SIM Card Master.  If it matches against any entry in any of these masters, then a row is inserted in Table 1 and the Vendor SKU Name, Vendor SKU Number of the entry are inserted in the respective columns of Table 1.  The S.No. is inserted under the Unexpected Item S.No. column. A green tick is put under Matched column. Under Remarks the following text is inserted:
+If the item location in the master was different from the location from which the audit is being done, then “Wrong Location” is inserted.
+If the item status was “Lost” in the masters then “Recovered” is also inserted in the Remarks column.
+If the 
+If the search in 2) above does not yield a match then another row is inserted in Table 1 and the S.No. scanned is inserted under the column “Unregistered Item S.No.”.  
+
+Duplicate scan protection: If the same serial number is scanned twice during the same audit session, the second scan is rejected and an error message comes up: "<S.No.> has already been audited in this session." 
+
+Once the user has scanned in all the Serial type SKUs they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The scan window is disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the scan window is again activated.   If a user presses Submit, all the S.No. that were not Matched show a red X in the Missing S.No. column.   If the Modify button is pressed then the red X disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button, a Table 2 opens below
+
+3.2.4 Audit Table 2: Retrieved Not Inspected Area
+
+Provisional Audit Report (PAR) <Audit Index>  Table 2 for Retrieved Not Inspected Accessories.
+Below that the instruction: Increment the count. 
+Below that the following Table 2 opens, with a header Table 2 (Retrieved Not Inspected Accessories) audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item Qty
+Retrieved Not Inspected Count
+Missing Count
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU that is not of Serial type an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item Qty basis the masters is populated.
+If the Expected Item Qty is zero, the same is shown.
+The other columns are empty.
+Only active SKUs are listed.
+
+User can see an increment, decrement counter with the value of the counter being shown in the middle in “Retrieved Not Inspected Count” column. The following actions happen:
+
+The user increments the count of a retrieved but not inspected accessory against that row under the Retrieved Not Inspected column.
+
+Once the user has updated the count of all SKUs, they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The counters are disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the counters appear again.  If user presses Submit, the difference between Expected Item Count and Working + Not Working is shown under Missing Count. If the Modify button is pressed then the Missing Count disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button on Table 2 they can go to the top of the screen and click on “Complete Audit Session <AIN Index>. This will pop-up a confirmation screen, after confirmation the PAR is stored and appears as a link under Audit Reports section in the Reports Tab.  
+
+At any time the user can press the “Cancel Audit Session <AIN Index> button.  This will pop-up for a confirmation screen and if pressed the session is cancelled and the PAR created is not stored.  It is not visible in Audit Reports also.
+
+3.2.5 Audit Table 1: Under Repair
+The user presses the Under Repair tab.
+A new screen opens with the following content:
+Provisional Audit Report (PAR) <Audit Index>  Table 1 for Under Repair Serial Type SKUs: Payment Terminals, Base Stations, and SIM Cards.
+Below that the instruction: Scan or punch in the S.No. of any of the above type of SKUs. 
+Below that a scan window appears for punching in or scanning in the Serial Number. Next to the window is a Submit button.  
+Below that the following Table 1 opens, with a header Table 1 (Under Repair Serial Type SKUs): Payment Terminals, Base Stations, and SIM cards audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item S.No.
+Unexpected Item S.No.
+Unregistered Item S.No.
+Matched
+Missing
+Remarks
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU of Serial type and for each S.No. of that vendor SKU that is expected with the user carrying out the audit, and whose Status in the Payment Terminal Master is marked as “Under Repair” an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item S.No. is populated.
+The other columns are empty.
+Only active SKUs are listed.
+
+User scans or punches in the S.No. of any of the above kind of SKUs from the Under Repair area .  He then presses Submit.  The following actions happen:
+
+The S.No. is first matched against the entries in the table, if it matches then a green tick is put against that row.  
+If it doesn’t match then it is searched against the Payment Terminal Master, the Base Station Master, and the SIM Card Master.  If it matches against any entry in any of these masters, then a row is inserted in Table 1 and the Vendor SKU Name, Vendor SKU Number of the entry are inserted in the respective columns of Table 1.  The S.No. is inserted under the Unexpected Item S.No. column. A green tick is put under Matched column. Under Remarks the following text is inserted:
+If the item location in the master was different from the location from which the audit is being done, then “Wrong Location” is inserted.
+If the item status was “Lost” in the masters then “Recovered” is also inserted in the Remarks column.
+If the 
+If the search in 2) above does not yield a match then another row is inserted in Table 1 and the S.No. scanned is inserted under the column “Unregistered Item S.No.”.  
+
+Duplicate scan protection: If the same serial number is scanned twice during the same audit session, the second scan is rejected and an error message comes up: "<S.No.> has already been audited in this session." 
+
+Once the user has scanned in all the Serial type SKUs they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The scan window is disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the scan window is again activated.   If a user presses Submit, all the S.No. that were not Matched show a red X in the Missing S.No. column.   If the Modify button is pressed then the red X disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button, a Table 2 opens below
+
+3.2.6 Audit Table 2: Under Repair Area
+
+Provisional Audit Report (PAR) <Audit Index>  Table 2 for Under Repair Accessories.
+Below that the instruction: Increment the count. 
+Below that the following Table 2 opens, with a header Table 2 (Under Repair Accessories) audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item Qty
+Under Repair Count
+Missing Count
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU that is not of Serial type an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item Qty basis the masters is populated.
+If the Expected Item Qty is zero, the same is shown.
+The other columns are empty.
+Only active SKUs are listed.
+
+User can see an increment, decrement counter with the value of the counter being shown in the middle in “Under Repair Count” column. The following actions happen:
+
+The user increments the count of a retrieved but not inspected accessory against that row under the Under Repair Count column.
+
+Once the user has updated the count of all SKUs, they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The counters are disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the counters appear again.  If user presses Submit, the difference between Expected Item Count and Working + Not Working is shown under Missing Count. If the Modify button is pressed then the Missing Count disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button on Table 2 they can go to the top of the screen and click on “Complete Audit Session <AIN Index>. This will pop-up a confirmation screen, after confirmation the PAR is stored and appears as a link under Audit Reports section in the Reports Tab.  
+
+At any time the user can press the “Cancel Audit Session <AIN Index> button.  This will pop-up for a confirmation screen and if pressed the session is cancelled and the PAR created is not stored.  It is not visible in Audit Reports also.
+
+3.2.7 Audit Table 1: Repaired Not Inspected
+The user presses the Repaired Not Inspected tab.
+A new screen opens with the following content:
+Provisional Audit Report (PAR) <Audit Index>  Table 1 for Repaired Not Inspected Serial Type SKUs: Payment Terminals, Base Stations, and SIM Cards.
+Below that the instruction: Scan or punch in the S.No. of any of the above type of SKUs. 
+Below that a scan window appears for punching in or scanning in the Serial Number. Next to the window is a Submit button.  
+Below that the following Table 1 opens, with a header Table 1 (Repaired Not Inspected Serial Type SKUs): Payment Terminals, Base Stations, and SIM cards audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item S.No.
+Unexpected Item S.No.
+Unregistered Item S.No.
+Matched
+Missing
+Remarks
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU of Serial type and for each S.No. of that vendor SKU that is expected with the user carrying out the audit, and whose Status in the Payment Terminal Master is marked as “Repaired Not Inspected” an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item S.No. is populated.
+The other columns are empty.
+Only active SKUs are listed.
+
+User scans or punches in the S.No. of any of the above kind of SKUs from the Repaired Not Inspected area .  He then presses Submit.  The following actions happen:
+
+The S.No. is first matched against the entries in the table, if it matches then a green tick is put against that row.  
+If it doesn’t match then it is searched against the Payment Terminal Master, the Base Station Master, and the SIM Card Master.  If it matches against any entry in any of these masters, then a row is inserted in Table 1 and the Vendor SKU Name, Vendor SKU Number of the entry are inserted in the respective columns of Table 1.  The S.No. is inserted under the Unexpected Item S.No. column. A green tick is put under Matched column. Under Remarks the following text is inserted:
+If the item location in the master was different from the location from which the audit is being done, then “Wrong Location” is inserted.
+If the item status was “Lost” in the masters then “Recovered” is also inserted in the Remarks column.
+If the search in 2) above does not yield a match then another row is inserted in Table 1 and the S.No. scanned is inserted under the column “Unregistered Item S.No.”.  
+
+Duplicate scan protection: If the same serial number is scanned twice during the same audit session, the second scan is rejected and an error message comes up: "<S.No.> has already been audited in this session." 
+
+Once the user has scanned in all the Serial type SKUs they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The scan window is disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the scan window is again activated.   If a user presses Submit, all the S.No. that were not Matched show a red X in the Missing S.No. column.   If the Modify button is pressed then the red X disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button, a Table 2 opens below
+
+3.2.8 Audit Table 2: Repaired Not Inspected Area
+
+Provisional Audit Report (PAR) <Audit Index>  Table 2 for Repaired Not Inspected Accessories.
+Below that the instruction: Increment the count. 
+Below that the following Table 2 opens, with a header Table 2 (Repaired Not Inspected Accessories) audit status.  The table has a button next to the header “Submit”
+Vendor SKU Number 
+Vendor SKU Name
+Expected Item Qty
+Repaired Not Inspected Count
+Missing Count
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+The following rules apply for this table:
+For each active Vendor SKU that is not of Serial type an entry is there in the table as follows:
+The Vendor SKU Name, Vendor SKU Number, and Expected Item Qty basis the masters is populated.
+If the Expected Item Qty is zero, the same is shown.
+The other columns are empty.
+Only active SKUs are listed.
+
+User can see an increment, decrement counter with the value of the counter being shown in the middle in “Repaired Not Inspected Count” column. The following actions happen:
+
+The user increments the count of a retrieved but not inspected accessory against that row under the Repaired Not Inspected Count column.
+
+Once the user has updated the count of all SKUs, they can press the “Submit” button and the table is stored internally while the button status changes to “Modify”.  The counters are disabled. In case the user by mistake had pressed the Submit button they can press on Modify, the state changes back to Submit and the counters appear again.  If user presses Submit, the difference between Expected Item Count and Working + Not Working is shown under Missing Count. If the Modify button is pressed then the Missing Count disappears and appears again basis the same rule as defined above.
+
+In case for 30 minutes there is no action in the audit session, then the audit session PAR is automatically submitted and its status under Reports will show as Incomplete.  The user can upon pressing the Audit tab in their page can see the session again and continue it.  There can be only one Incomplete session for a user.  A user cannot have an Incomplete and Pending Review sessions, they are mutually exclusive. 
+
+Once a user has pressed the Submit button on Table 2 they can go to the top of the screen and click on “Complete Audit Session <AIN Index>. This will pop-up a confirmation screen, after confirmation the PAR is stored and appears as a link under Audit Reports section in the Reports Tab.  
+
+At any time the user can press the “Cancel Audit Session <AIN Index> button.  This will pop-up for a confirmation screen and if pressed the session is cancelled and the PAR created is not stored.  It is not visible in Audit Reports also.
+

@@ -12,21 +12,69 @@ import { subscribeLoading } from '../lib/api.js';
  * initial auth check on a full page refresh, before any layout renders.
  */
 export default function GlobalLoader({ force = false }) {
-  const [visible, setVisible] = useState(false);
+  // Start visible so the very first mount inside Layout bridges the gap
+  // between the auth-gate force-loader unmounting and the new page firing
+  // its initial API request (otherwise the page paints uncovered for a
+  // few frames before the subscriber kicks in).
+  const [visible, setVisible] = useState(true);
 
   useEffect(() => {
     if (force) return undefined;
-    let timer;
-    const unsubscribe = subscribeLoading((busy) => {
-      clearTimeout(timer);
-      if (busy) {
-        timer = setTimeout(() => setVisible(true), 150);
-      } else {
+    let showTimer;
+    let hideTimer;
+    let graceTimer;
+    let pastGrace = false;
+    let busyNow = false;
+
+    const cancelHide = () => {
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = undefined; }
+    };
+    const scheduleHide = () => {
+      cancelHide();
+      // Hold the loader for a short window after the last in-flight request
+      // ends. Pages often chain awaits (request → request → request); without
+      // this delay the loader hides between each one and the page flashes
+      // through. A follow-up request within the window cancels the hide.
+      hideTimer = setTimeout(() => {
+        hideTimer = undefined;
         setVisible(false);
+      }, 200);
+    };
+    const scheduleShow = () => {
+      if (showTimer) return; // don't reset; let the original 150ms tick run
+      showTimer = setTimeout(() => {
+        showTimer = undefined;
+        // Suppress the show if all requests already completed in under 150ms.
+        if (busyNow) setVisible(true);
+      }, 150);
+    };
+
+    // Initial-mount bridging: the auth-gate force-loader has just unmounted
+    // and the new page's useEffect hasn't fired its API request yet. Keep
+    // the loader visible across that gap.
+    graceTimer = setTimeout(() => {
+      pastGrace = true;
+      if (!busyNow) scheduleHide();
+    }, 200);
+
+    const unsubscribe = subscribeLoading((busy) => {
+      busyNow = busy;
+      if (!pastGrace) {
+        if (busy) setVisible(true);
+        return;
+      }
+      if (busy) {
+        cancelHide();
+        scheduleShow();
+      } else {
+        scheduleHide();
       }
     });
+
     return () => {
-      clearTimeout(timer);
+      if (showTimer) clearTimeout(showTimer);
+      cancelHide();
+      clearTimeout(graceTimer);
       unsubscribe();
     };
   }, [force]);
@@ -35,42 +83,14 @@ export default function GlobalLoader({ force = false }) {
 
   return (
     <div className="global-loader" role="status" aria-label="Loading">
-      <div className="s-loader">
-        <div className="s-loader-whirl">
-          <svg viewBox="0 0 200 200" aria-hidden="true">
-            {/* Outer arc, broken into two sweeps */}
-            <path className="arc arc-3" d="M 100 6 A 94 94 0 0 1 184 60" />
-            <path
-              className="arc arc-3"
-              d="M 100 194 A 94 94 0 0 1 16 140"
-              style={{ animationDelay: '-1.7s' }}
-            />
-
-            {/* Middle arc */}
-            <path className="arc arc-2" d="M 100 22 A 78 78 0 1 1 22 100" />
-
-            {/* Inner arc (matches S spin) */}
-            <path className="arc arc-1" d="M 100 38 A 62 62 0 0 1 162 100" />
-            <path
-              className="arc arc-1"
-              d="M 100 162 A 62 62 0 0 1 38 100"
-              style={{ animationDelay: '-0.8s' }}
-            />
-
-            {/* Particle dots riding the orbits */}
-            <g className="dot-a">
-              <circle className="dot-purple" cx="100" cy="38" r="2.6" />
-            </g>
-            <g className="dot-b">
-              <circle className="dot-orange" cx="100" cy="22" r="2.2" />
-            </g>
-            <g className="dot-a" style={{ animationDelay: '-0.55s' }}>
-              <circle className="dot-orange" cx="100" cy="38" r="1.8" opacity="0.85" />
-            </g>
-          </svg>
+      <div className="shakti-loader">
+        <span className="shakti-loader__label">LOADING</span>
+        <div className="shakti-loader__bar">
+          <div className="shakti-loader__fill">
+            <div className="p"></div>
+            <div className="o"></div>
+          </div>
         </div>
-
-        <div className="s-loader-letter">S</div>
       </div>
     </div>
   );

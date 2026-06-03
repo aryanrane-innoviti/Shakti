@@ -21,12 +21,12 @@ router.post('/login', async (req, res, next) => {
     const generic = { error: 'Invalid credentials' };
     if (!email || !password) return res.status(401).json(generic);
     const user = await one(
-      `SELECT user_id, user_index, email, password_hash, status, deleted_at
-         FROM users WHERE LOWER(email) = LOWER($1)`,
+      `SELECT user_id, user_index, email, password_hash, status
+         FROM users WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL`,
       [email]
     );
     if (!user) return res.status(401).json(generic);
-    if (user.deleted_at || user.status !== 'Active') return res.status(401).json(generic);
+    if (user.status !== 'Active') return res.status(401).json(generic);
     const ok = await verifyPassword(password, user.password_hash);
     if (!ok) return res.status(401).json(generic);
     const token = await createSession(user.user_id);
@@ -46,26 +46,21 @@ router.post('/logout', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/me', requireAuth, async (req, res, next) => {
-  try {
-    const adminExists = !!(await one(
-      `SELECT 1 FROM users u JOIN user_types ut ON ut.user_type_id = u.user_type_id
-        WHERE ut.code = 'ADMIN' AND u.deleted_at IS NULL LIMIT 1`
-    ));
-    res.json({
-      user_id: req.session.user_id,
-      user_index: req.session.user_index,
-      email: req.session.email,
-      first_name: req.session.first_name,
-      last_name: req.session.last_name,
-      user_type_code: req.session.user_type_code,
-      user_type_label: req.session.user_type_label,
-      initial_setup_required:
-        req.session.user_type_code === 'SA' && !adminExists,
-    });
-  } catch (e) {
-    next(e);
-  }
+router.get('/me', requireAuth, (req, res) => {
+  // attachInitialSetupFlag (global middleware, server.js) already ran the
+  // ADMIN-existence query for this request and stored it on req.admin_exists —
+  // reuse it instead of issuing the identical query a second time.
+  res.json({
+    user_id: req.session.user_id,
+    user_index: req.session.user_index,
+    email: req.session.email,
+    first_name: req.session.first_name,
+    last_name: req.session.last_name,
+    user_type_code: req.session.user_type_code,
+    user_type_label: req.session.user_type_label,
+    initial_setup_required:
+      req.session.user_type_code === 'SA' && !req.admin_exists,
+  });
 });
 
 router.post(

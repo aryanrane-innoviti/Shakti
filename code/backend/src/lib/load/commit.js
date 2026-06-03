@@ -90,12 +90,21 @@ async function buildLookups(kind) {
   return { vendorByName, skuByNumber };
 }
 
-async function existingIndexSet(kind) {
+// Build the set of already-existing (anchor :: index-value) keys this file
+// could collide with. Only the index values that actually appear in the file
+// can ever be probed (validateRow checks existingIndex.has(`${anchorId}::${
+// indexRaw.toLowerCase()}`)), so we fetch existing rows for just those values
+// instead of materialising the entire (10k..1M-row) master table per commit.
+async function existingIndexSet(kind, fileIdxValues) {
+  if (!fileIdxValues.length) return new Set();
   const indexCol = kind.uniqueIndexLabel; // serial_number or sim_card_number
   // Vendor-SKU kinds are unique per vendor SKU; SIM Cards per Innoviti SKU.
   const anchorCol = kind.matchField === 'vendor_sku_number' ? 'vendor_sku_id' : 'sku_id';
   const rows = await many(
-    `SELECT ${anchorCol} AS anchor, ${indexCol} AS idx FROM ${kind.tableName} WHERE deleted_at IS NULL`
+    `SELECT ${anchorCol} AS anchor, ${indexCol} AS idx
+       FROM ${kind.tableName}
+      WHERE deleted_at IS NULL AND lower(${indexCol}) = ANY($1)`,
+    [fileIdxValues]
   );
   const set = new Set();
   for (const r of rows) set.add(`${r.anchor}::${String(r.idx).toLowerCase()}`);
@@ -280,7 +289,18 @@ async function bulkLogChange(client, objectType, ids, actor) {
 
 export async function commitLoad({ kind, attempt, mapping, rows, actor, droppedTargets }) {
   const lookups = await buildLookups(kind);
-  const existingIndex = await existingIndexSet(kind);
+  // The duplicate check only ever probes the index values present in THIS file,
+  // so collect them up-front (distinct, lower-cased) and fetch only matching
+  // existing rows — never the whole master table.
+  const idxHeader = mapping[kind.uniqueIndexLabel];
+  const fileIdxValues = idxHeader
+    ? [...new Set(
+        rows
+          .map((r) => (r[idxHeader] == null ? '' : String(r[idxHeader]).trim().toLowerCase()))
+          .filter(Boolean)
+      )]
+    : [];
+  const existingIndex = await existingIndexSet(kind, fileIdxValues);
   const indexSeenInFile = new Set();
   const errors = [];
   const passing = [];

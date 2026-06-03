@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Shakti · Loader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #f1ede6;
+    display: grid;
+    place-items: center;
+  }
+
+  /* ============================================================
+     SHAKTI LOADER
+     ============================================================ */
+  .shakti-loader {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  .shakti-loader__label {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: #ee7b30;
+  }
+  .shakti-loader__bar {
+    width: 240px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(42, 18, 64, 0.10);
+    overflow: hidden;
+    position: relative;
+  }
+  .shakti-loader__fill {
+    position: absolute;
+    inset: 0;
+    width: 0%;
+    display: flex;
+    animation: shakti-fill 2.2s cubic-bezier(.55, .1, .45, .95) infinite;
+  }
+  .shakti-loader__fill .p { flex: 0 0 65%; background: #2a1240; }
+  .shakti-loader__fill .o { flex: 1 1 auto; background: #ee7b30; }
+
+  @keyframes shakti-fill {
+    0%   { width: 0%;   transform: translateX(0); }
+    55%  { width: 100%; transform: translateX(0); }
+    100% { width: 100%; transform: translateX(105%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shakti-loader__fill { animation: none; width: 100%; }
+  }
+</style>
+</head>
+<body>
+  <div class="shakti-loader" role="status" aria-label="Loading">
+    <span class="shakti-loader__label">LOADING</span>
+    <div class="shakti-loader__bar">
+      <div class="shakti-loader__fill">
+        <div class="p"></div>
+        <div class="o"></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

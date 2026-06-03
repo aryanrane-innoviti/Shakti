@@ -8,7 +8,7 @@ const router = Router();
 // (accepts the literal 'null' for unaudited rows); plus per-kind:
 //   Payment Terminal / Base Station — vendor_sku_id (accepts 'null' for rows
 //     with no resolved vendor SKU), owner_vendor_id, date_of_purchase_from/_to.
-//   SIM Card — sku_id.
+//   SIM Card — sku_id, owner_vendor_id, date_of_purchase_from/_to.
 function buildFilters(req, opts) {
   const where = ['m.deleted_at IS NULL'];
   const params = [];
@@ -181,7 +181,7 @@ function makeSummary(opts) {
 }
 
 const PT = { table: 'payment_terminal_master', pk: 'payment_terminal_master_id', indexCol: 'serial_number', hasOwner: true,  hasDate: true,  hasVendorSku: true  };
-const SC = { table: 'sim_card_master',         pk: 'sim_card_master_id',         indexCol: 'sim_card_number', hasOwner: false, hasDate: false, hasVendorSku: false };
+const SC = { table: 'sim_card_master',         pk: 'sim_card_master_id',         indexCol: 'sim_card_number', hasOwner: true,  hasDate: true,  hasVendorSku: false };
 const BS = { table: 'base_station_master',     pk: 'base_station_master_id',     indexCol: 'serial_number', hasOwner: true,  hasDate: true,  hasVendorSku: true  };
 
 // NB: /summary is registered before /:id so the literal isn't captured as an id.

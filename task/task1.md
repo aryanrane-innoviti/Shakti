@@ -159,11 +159,12 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `mobile` (string, **optional**; if provided, exactly 10 digits, no country prefix, matches `^[6-9]\d{9}$`).
 - `vendor_id` (FK → Vendors, **required**; defaults to the Innoviti vendor for every user type **except** `RLU` and `LOU`; **fully editable**).
 - `employee_id` (string, conditional — see validation; format `IC/NNNN` or `INN/NNNN`, regex `^(IC|INN)/\d{4}$`).
-- `address_line_1` (string, **optional**).
-- `address_line_2` (string, optional).
-- `pincode` (string, 6 digits).
-- `city` (string, derived from pincode at form-fill).
-- `state` (string, derived from pincode at form-fill).
+- `address_line_1` (string, **optional**). **Not collected for ASO users** — the Add / Modify User form hides the address section when `user_type_id` resolves to `ASO`, and any address payload for an ASO is silently ignored. The columns remain on the schema for the other user types (`SA`, `ADMIN`, `STU`, `ALU`, `RLU`, `FNU`, `LOU`).
+- `address_line_2` (string, optional). Same ASO-exclusion as above.
+- `pincode` (string, 6 digits). Same ASO-exclusion as above.
+- `city` (string, derived from pincode at form-fill). Same ASO-exclusion as above.
+- `state` (string, derived from pincode at form-fill). Same ASO-exclusion as above.
+- `location_id` (FK → Inventory Locations, **optional**, **nullable**). The user's home Inventory Location. Used by the Phase 3 Audit modules — ASO uses it to know which location to audit; STU uses it to know which store they belong to. **Not consumed** by any Phase 1 or Phase 2 flow. **Assignment happens from the Locations tab (§9)**, not from the User form — the User form does **not** show a location picker. The Innoviti-vendor gate (for ASO **and** STU) and the Phase 3 in-flight-audit guard fire on whichever endpoint mutates this column (today: the Locations tab's `PUT /locations/{id}/aso-users` and `PUT /locations/{id}/stu-users` endpoints — see §9).
 - `status` (enum: `Active`, `Inactive`; default `Active`).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
@@ -184,6 +185,8 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `employee_id`: **required AND unique** when `vendor_id` resolves to the Innoviti vendor; **must not** be set when vendor != Innoviti (reject with 422).
 - `pincode`: **required** 6 digits; City/State derived via third-party lookup. If lookup fails, allow save but flag for review.
 - `user_type_id`: must reference an existing (non-deleted) User Type.
+- `location_id`: not settable via `POST /users` or `PATCH /users/{id}` — both endpoints **ignore** the field if it appears in the request body, even from SA / Admin. Assignment is performed exclusively from the Locations tab: `PUT /locations/{id}/aso-users` for ASO users and `PUT /locations/{id}/stu-users` for STU users (§9). Both Phase 1 endpoints enforce the Innoviti-vendor gate, and Phase 3 layers a single in-flight-audit guard hook on each.
+- **Address fields** (`address_line_1`, `address_line_2`, `pincode`, `city`, `state`): not collected when `user_type_id` resolves to `ASO`. The API silently drops any address values in the request payload for an ASO; existing rows that already have address values are left untouched (no destructive cleanup). For every other user type the original validation applies — `pincode` required 6 digits, city/state derived via pincode lookup.
 - Cannot create another `SA` — system enforces a single SA seat (the seeded one).
 
 ### Business rules / invariants
@@ -196,12 +199,15 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 ### UI surface
 - **Initial Setup screen**: shown to SA on first login; blocks all other navigation until the first Admin user is created.
 - **Manage User dashboard**: total user count at top; list of users with `User Type`; inline actions **Modify**, **Delete**, **Copy Password Reset URL**; "Add User" button top-right.
-- **Add User / Modify User form**: all fields above, with pincode lookup, vendor picker (defaults to Innoviti for non-RLU/LOU and remains editable), conditional Employee ID field shown only when vendor is Innoviti.
+- **Add User / Modify User form**: all schema fields with the two ASO-specific suppressions below; pincode lookup; vendor picker (defaults to Innoviti for non-RLU/LOU and remains editable); conditional Employee ID field shown only when vendor is Innoviti.
+  - **Address section hidden for ASO**: when the selected `user_type_id` is `ASO`, the form's address block (Address Line 1/2, Pincode, City, State) is not rendered. Toggling the user type at form-fill time hides or re-shows the section without resetting the other fields. For every other user type the address section appears unchanged.
+  - **No location picker on this form** for any user type. Location assignment for ASO users happens from the Locations tab — see §9. The Modify User form may surface a read-only "Assigned Audit Location" line for ASO users (showing the current `location_id` with a deep link to the Location detail page) but it is not editable here.
 - **Confirm-via-popup** for Modify and Delete actions.
 
 ### Cross-object dependencies
 - User Types must exist (seeded).
 - Vendors must exist (Innoviti seed at minimum).
+- Inventory Locations (§9) are not a precondition for creating any user — the `location_id` column starts NULL and is populated later from the Locations tab.
 
 ### Acceptance
 - SA's first login lands on Initial Setup and cannot navigate elsewhere until an Admin is created.
@@ -209,6 +215,8 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - Two users cannot share the same email.
 - Deleting a user sets Status=Inactive; the user appears in historical reports but is denied login.
 - Reactivating an Inactive user issues a fresh single-use 24h reset URL, surfaced via copy-to-clipboard. The prior password no longer works.
+- Creating an ASO user with no address fields in the payload succeeds — the address columns remain NULL and the form's address section was hidden in the UI.
+- `POST /users` and `PATCH /users/{id}` with `location_id` in the payload **ignore** the field — the column is unchanged. (ASO-location-assignment acceptance lives in §9 alongside the endpoint that actually mutates it.)
 
 ---
 
@@ -611,20 +619,42 @@ There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, P
 - `secondary_contact_id` (FK → Contacts, **optional**; if set, must differ from `principal_contact_id` and must belong to the same vendor).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
+**Derived (not columns on `locations`)**:
+- `assigned_aso_user_ids` — the list of `users.user_id` values where `users.location_id = <this location_id> AND users.user_type_code = 'ASO' AND users.deleted_at IS NULL`. Surfaced in API responses (see GET below) and mutated atomically via `PUT /locations/{id}/aso-users` below.
+- `assigned_stu_user_ids` — same construction as above but with `user_type_code = 'STU'`. Mutated via `PUT /locations/{id}/stu-users` (the STU parallel endpoint described below).
+- Both projections come from the same single-FK column on the user row (`users.location_id`, §3); they differ only in the user-type filter applied. A user has at most one `location_id`, so a user appears in at most one Location's projection at any time.
+
 **No Status field.** Soft delete is the only retirement mechanism.
 
 ### API endpoints
 - `POST   /locations` — create (SA or Admin).
-- `GET    /locations/{id}` — read one. Response includes resolved Principal/Secondary contact display names (with `(deleted)` suffix when contact is soft-deleted).
+- `GET    /locations/{id}` — read one. Response includes resolved Principal/Secondary contact display names (with `(deleted)` suffix when contact is soft-deleted), an `assigned_aso_users` array `[{ user_id, user_index, first_name, last_name, email }]`, and an `assigned_stu_users` array of the same shape.
 - `GET    /locations` — list, filterable by `vendor_id`.
-- `PATCH  /locations/{id}` — update; updates to `vendor_id` are **SA only**. Existing Principal/Secondary contacts are **kept as-is** across the vendor change (no clearing, no re-pick prompt). The cross-vendor contact reference is allowed and persists until SA explicitly edits the contact pickers.
-- `DELETE /locations/{id}` — **soft delete**.
+- `PATCH  /locations/{id}` — update; updates to `vendor_id` are **SA only**. Existing Principal/Secondary contacts are **kept as-is** across the vendor change (no clearing, no re-pick prompt). The cross-vendor contact reference is allowed and persists until SA explicitly edits the contact pickers. **Does not** accept the ASO-assignment field — use the dedicated endpoint below.
+- `PUT    /locations/{id}/aso-users` — **set the full list** of ASO users assigned to this Location. Body: `{ "user_ids": [<int>, ...] }`. SA or Admin only. Behaviour:
+  - For every `user_id` in the new list that is not already assigned here: set `users.location_id = <this location_id>` (additive).
+  - For every user **currently** assigned to this location whose `user_id` is **not** in the new list: set `users.location_id = NULL` (clear).
+  - Runs as a single transaction; partial failure rolls back the whole set.
+  - Each affected user is validated individually — see Validation rules. A 422 / 409 on any single user aborts the whole call with that user named in the error envelope.
+  - Writes one `change_log` row of `(User, <user_index>, actor, Update)` per affected user (same convention `PATCH /users/{id}` would have produced — preserves audit symmetry).
+- `PUT    /locations/{id}/stu-users` — exact parallel to `/aso-users` but scoped to STU users. Body, transaction semantics, and change-log emission are identical. Validation differs only in the user-type check: each `user_id` must resolve to `user_type_code = 'STU'`, otherwise 422 `store_location_user_not_stu`. The Innoviti-vendor gate and the Phase 3 in-flight-audit guard fire here in exactly the same way they fire on `/aso-users` (see `task/task3-stu.md` §5.1 for the STU-side guard hook).
+- `DELETE /locations/{id}` — **soft delete**. Soft-deleting a Location whose `assigned_aso_users` **or** `assigned_stu_users` is non-empty returns 409 `location_has_assigned_users` with both lists named — assignment must be cleared first via `PUT .../aso-users` and/or `PUT .../stu-users` with an empty list.
 
 ### Validation rules
 - `location_name`: required; **no uniqueness constraint** — duplicates within or across vendors are allowed.
 - `principal_contact_id`: required; **at the moment of assignment** (create, or whenever the contact picker is edited), the chosen Contact must be non-deleted and have `vendor_id` equal to the Location's current `vendor_id`. After a subsequent vendor change on the Location, the existing principal reference is preserved even if it no longer matches the new vendor.
 - `secondary_contact_id`: if provided, same vendor rule **at the moment of assignment**, and must not equal `principal_contact_id`.
 - `vendor_id`: at create, any Vendor (Active or Inactive — see §6). On update, mutable **only by SA**; contact references are not cleared on the change.
+- **`PUT /locations/{id}/aso-users` validation** — applied per `user_id` in the supplied list:
+  - User must exist and not be soft-deleted → 422 `aso_user_not_found`.
+  - User's `user_type_code` must be `ASO` → 422 `audit_location_user_not_aso`.
+  - The location's `vendor_id` must match the seeded Innoviti vendor → 422 `audit_location_vendor_not_innoviti`. (Non-Innoviti locations cannot be assigned to ASOs at all — assignment rejects up-front rather than rejecting per-user.)
+  - Phase 3 only: if the user has any `audit_sessions` row with `status IN ('Incomplete','PendingReview')` AND `deleted_at IS NULL`, the assignment change for that user is rejected with 409 `audit_location_in_use` and the offending AIN. (Same guard described in `task/task3-aso.md` §5.1 — it now fires on this endpoint instead of the user-update endpoint.) Applies symmetrically to additions, removals, and "user reassigned from another location to this one."
+  - User IDs are de-duplicated server-side; a duplicated id in the request is silently collapsed.
+- **`PUT /locations/{id}/stu-users` validation** — same shape as the ASO block above with three substitutions:
+  - User-type check uses `STU`; the error code on a mismatch is 422 `store_location_user_not_stu` (analogue of `audit_location_user_not_aso`).
+  - Innoviti-vendor gate uses error code 422 `store_location_vendor_not_innoviti`.
+  - Phase 3 in-flight-audit guard checks `store_audit_sessions` (not `audit_sessions`) for non-terminal rows owned by the user; on a hit the response is 409 `store_location_in_use` with the offending Store-AIN. See `task/task3-stu.md` §5.1.
 
 ### Business rules / invariants
 - **Deleted contacts retained in display**: a Contact that was Principal or Secondary on this Location continues to render on the Location form even after Contact soft-delete, with the `(deleted)` suffix.
@@ -635,6 +665,12 @@ There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, P
 - **Manage Locations** screen with Vendor filter.
 - **Add / Modify Location form**: vendor picker (disabled on edit for non-SA roles), location name, address with pincode lookup, Principal and Secondary contact pickers scoped to the chosen Vendor's Contacts list. When SA changes the vendor on an existing Location, the contact pickers display the previously selected (possibly cross-vendor) contacts; the dropdowns themselves still list only the new Vendor's contacts for fresh selection. A small "(other vendor)" annotation appears next to a contact name whose vendor no longer matches the Location's vendor.
 - If the chosen Vendor has zero non-deleted Contacts, the Principal-contact picker shows an inline message — "No contacts exist for this Vendor — add a contact first" — and the form blocks submission until a Contact is created.
+- **Assign Personnel panel** (Modify Location only, below the contact pickers): a labelled section titled `Assign this Location to…` with three stacked sub-pickers.
+  - **Contacts** — read-only summary of the Principal / Secondary contacts already set above. Contact-to-Location assignment continues to live in the Principal / Secondary pickers (no duplicate writeable picker here).
+  - **ASO Users** — a multi-select dropdown of active ASO users (search by name / `user_index` / email). The dropdown opens only when the Location's vendor is Innoviti; for any other vendor the picker is replaced with the inline message `ASO assignment is available only for Innoviti-vendor locations.` Below the picker, currently assigned ASOs render as removable chips. Adding or removing a chip triggers a single `PUT /locations/{id}/aso-users` call with the new full list; the per-user validation errors (`audit_location_user_not_aso`, `audit_location_in_use`, etc.) surface as toasts naming the offending user.
+  - **STU Users** — same shape as the ASO sub-picker but bound to `PUT /locations/{id}/stu-users`; same Innoviti-only gate, same chip / confirm-to-reassign UX. Errors use the STU-prefixed codes (`store_location_user_not_stu`, `store_location_in_use`).
+  - Each picker shows a confirmation modal when adding a user who is **already assigned to another location** — `Reassign <First Last> from <Other Location> to this Location?` — and on confirm performs the move in one call.
+- The Add Location form does **not** show the Assign Personnel panel — assignment is only possible after the Location row exists.
 
 ### Cross-object dependencies
 - Vendor must exist.
@@ -647,6 +683,13 @@ There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, P
 - Two Locations with the same name under the same Vendor (or across different Vendors) are both accepted — `location_name` has no uniqueness constraint.
 - After SA changes a Location's `vendor_id`, the prior Principal/Secondary contacts remain on the Location detail page even though they now belong to a different Vendor.
 - A soft-deleted Contact that was once Principal still appears on the Location detail with `(deleted)`.
+- `PUT /locations/{innoviti_loc_id}/aso-users` with two valid ASO `user_ids` sets both users' `users.location_id` to this location and returns the updated `assigned_aso_users` list. A follow-up `GET /users/{id}` on either ASO returns the new `location_id`.
+- `PUT /locations/{innoviti_loc_id}/aso-users` with one existing ASO removed from the list clears that user's `location_id` to NULL.
+- `PUT /locations/{non_innoviti_loc_id}/aso-users` with any non-empty list returns 422 `audit_location_vendor_not_innoviti` and writes nothing.
+- `PUT /locations/{id}/aso-users` including the id of a non-ASO user returns 422 `audit_location_user_not_aso` and writes nothing.
+- `PUT /locations/{id}/aso-users` including the id of an ASO who currently has an in-flight audit session (Phase 3 onwards) returns 409 `audit_location_in_use` naming the AIN and writes nothing.
+- All five acceptance criteria above hold for `PUT /locations/{id}/stu-users` with `STU` substituted for `ASO`, `store_location_*` substituted for `audit_location_*`, and `store_audit_sessions` substituted for `audit_sessions`.
+- Soft-deleting a Location whose `assigned_aso_users` **or** `assigned_stu_users` is non-empty returns 409 `location_has_assigned_users`; clearing the offending list(s) first via the appropriate `PUT .../{aso|stu}-users` with `{ user_ids: [] }` allows the delete to succeed.
 
 ---
 
@@ -700,7 +743,7 @@ One mutation = one row. There is **no** `field_name`, `old_value`, or `new_value
 
 - Google SSO authentication (nav entry present but disabled; no backend route).
 - Audit report review by Admin (nav entry present but disabled; no backend route).
-- Audit module, including the user-level Locked Audit Location field and any audit workflow constraints.
+- Audit module workflow itself — sessions, scans, Provisional Audit Report, reviews. The user-level `location_id` field is provided in this phase (§3) so the schema is ready, but it is **not consumed** until Phase 3. The "block changes while an audit is in flight" guard, audit-session tables, and all audit endpoints land in Phase 3.
 - Order generation, partial-shipment splitting, and split-order numbering rules.
 - Dispatch and retrieval flows.
 - MIS reporting and report builders.

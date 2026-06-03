@@ -12,6 +12,8 @@ import Modal from '../components/Modal.jsx';
  */
 export default function VendorSkus() {
   const toast = useToast();
+  // Surface the server's human-readable message, not the raw JSON envelope.
+  const errMsg = (e, fallback) => e?.data?.error || e?.message || fallback;
   const [rows, setRows] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [skuTypes, setSkuTypes] = useState([]);
@@ -58,7 +60,7 @@ export default function VendorSkus() {
       }
       setEdit(null);
       load();
-    } catch (e) { toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
+    } catch (e) { toast.push(errMsg(e, 'Failed to save vendor SKU'), 'error'); }
   };
 
   const remove = async (r) => {
@@ -68,7 +70,7 @@ export default function VendorSkus() {
       toast.push('Vendor SKU deleted', 'success');
       load();
     } catch (e) {
-      toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error');
+      toast.push(errMsg(e, 'Failed to delete vendor SKU'), 'error');
     }
   };
 
@@ -79,7 +81,7 @@ export default function VendorSkus() {
       await api.post(`/vendor-skus/${r.vendor_sku_id}/status`);
       toast.push(`Vendor SKU marked ${next}`, 'success');
       load();
-    } catch (e) { toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
+    } catch (e) { toast.push(errMsg(e, 'Failed to change status'), 'error'); }
   };
 
   const restore = async (r) => {
@@ -87,7 +89,7 @@ export default function VendorSkus() {
       await api.post(`/vendor-skus/${r.vendor_sku_id}/restore`);
       toast.push('Vendor SKU restored', 'success');
       load();
-    } catch (e) { toast.push(`Failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
+    } catch (e) { toast.push(errMsg(e, 'Failed to restore vendor SKU'), 'error'); }
   };
 
   const uploadPdf = async (r, file) => {
@@ -96,7 +98,7 @@ export default function VendorSkus() {
       await api.upload(`/vendor-skus/${r.vendor_sku_id}/specification`, file);
       load();
       toast.push('Spec PDF uploaded', 'success');
-    } catch (e) { toast.push(`Upload failed: ${JSON.stringify(e.data || e.message)}`, 'error'); }
+    } catch (e) { toast.push(errMsg(e, 'Upload failed'), 'error'); }
   };
 
   const viewPdf = async (r) => {
@@ -302,7 +304,8 @@ export default function VendorSkus() {
               />
             </div>
             <div className="full help-text">
-              A vendor SKU number must be unique within its vendor. After saving, link this vendor
+              A vendor SKU number must be unique within its vendor, and the same number must
+              always carry the same name across all vendors. After saving, link this vendor
               SKU to the Innoviti SKUs it supplies from each Innoviti SKU's detail page.
             </div>
           </div>

@@ -99,6 +99,16 @@ export function requireAdminRead(req, res, next) {
   return res.status(403).json({ error: 'forbidden' });
 }
 
+// ASO-only access. Used for the Phase 3 audit-session routes that only an
+// ASO may invoke (start / scan / table mutations / complete / cancel). SA
+// and Admin get read-only oversight via separate routes; they do NOT pass
+// through this guard.
+export function requireAso(req, res, next) {
+  if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
+  if (req.session.user_type_code === 'ASO') return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+
 export async function attachInitialSetupFlag(req, res, next) {
   try {
     if (!req.session) return next();

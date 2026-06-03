@@ -23,7 +23,7 @@ const KINDS = {
   },
   sim_card: {
     label: 'SIM Cards', slug: 'sim-cards', indexLabel: 'SIM Number',
-    hasOwner: false, hasDate: false, hasVendorSku: false,
+    hasOwner: true, hasDate: true, hasVendorSku: false,
     states: ['Inactive', 'Active', 'Blocked', 'Lost'],
   },
   base_station: {

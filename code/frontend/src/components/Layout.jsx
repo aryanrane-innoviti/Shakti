@@ -42,6 +42,10 @@ const NAV = {
     { section: 'Audit' },
     { to: '/change-log', label: 'Change Log' },
   ],
+  // ASO users see only the Audit screen (and the identity panel for sign-out).
+  ASO: [
+    { to: '/audit', label: 'Audit' },
+  ],
 };
 
 export default function Layout() {

@@ -38,7 +38,7 @@ This subsection is the single source of truth for how `present_location`, `prese
   - `present_location_since = NULL`
   - `last_audited_at = NULL`
 - The Audit journey (Phase 3, out of scope here) is responsible for populating `present_location_id` and `present_location_since` when an auditor confirms physical presence of a unit at a location. Until then, every loaded row's location is explicitly unknown.
-- Because location is unknown at load, the load journey **does not require the uploading Admin to be tied to an Inventory Location**. There is no Phase 2 change to the Phase 1 `users` table.
+- Because location is unknown at load, the load journey **does not require the uploading Admin to be tied to an Inventory Location**. The Phase 1 `users` table carries an optional `location_id` (added in `task1.md` §3) but this slice never reads, writes, or requires it — the load journey is location-agnostic. Phase 2 makes no schema change to the `users` table.
 - The State default on load is per-Master (see §2 / §3 / §4):
   - Payment Terminal Master → `Working`.
   - SIM Card Master → `Active`.
@@ -186,7 +186,11 @@ This subsection is the single source of truth for how `present_location`, `prese
 - `sku_number_snapshot` (string snapshot of the SKU code at load time).
 - `sku_name_snapshot` (string, **derived** from the SKU resolved by `sku_number`; never read from the file).
 - `sku_description_snapshot` (string — from the file's optional `description` column when supplied, else the resolved SKU's own description).
+- `vendor_sku_number_snapshot` (string — the Vendor SKU number the row was matched/loaded under; lets View Stock show the Innoviti SKU ↔ Vendor SKU association).
+- `owner_vendor_id` (FK → Phase 1 Vendor, **required**; resolved at load time from the source file's `owner` column — mirrors Payment Terminal / Base Station Master). This is the supplying Vendor for the SIM unit; together with `vendor_sku_number` it uniquely identifies the Vendor SKU the unit was loaded under.
 - `sim_card_number` (string, **required**, 1–50 chars).
+- `date_of_purchase` (date, **optional**, **nullable**; from the source file's optional `date_of_purchase` column — mirrors Payment Terminal / Base Station Master). Accepts `YYYY-MM-DD` or `DD/MM/YYYY`; stored as a `DATE`. NULL when the row omits it.
+- `vendor_sku_id` (FK → Vendor SKUs, **optional**, **nullable**). With `owner_vendor_id` now on the row, the loader can resolve `vendor_sku_id` from `(owner_vendor_id, vendor_sku_number)` exactly like PT and BS. Rows loaded **before** this resolution path is wired up keep `vendor_sku_id = NULL`; a future back-fill migration can populate them once the snapshot pair is reliably present.
 - `present_location_id` (FK → Inventory Location, **NULL on load**; populated by Phase 3 Audit).
 - `present_location_since` (timestamp, **NULL on load**).
 - `last_audited_at` (timestamp, **NULL on load**).
@@ -200,19 +204,20 @@ This subsection is the single source of truth for how `present_location`, `prese
 ### API endpoints
 - `POST /loads/sim-card/preview` — multipart file upload. ADMIN only.
 - `POST /loads/sim-card/commit` — JSON. ADMIN only.
-- `GET  /stock/sim-cards` — list with filters `state`, `sku_id`, `present_location_id` (including `present_location_id=null`).
+- `GET  /stock/sim-cards` — list with filters `state`, `sku_id`, `owner_vendor_id`, `vendor_sku_number` (accepts the literal `null`), `date_of_purchase_from` / `date_of_purchase_to`, `present_location_id` (including `present_location_id=null`). SA + Admin only. The `owner_vendor_id`, `vendor_sku_number`, and `date_of_purchase_from`/`_to` filters mirror Payment Terminal / Base Station Master.
 - `GET  /stock/sim-cards/{id}` — read one.
-- `GET  /stock/sim-cards/summary` — unit counts grouped by Innoviti SKU with a per-state breakdown (SIM cards carry no Vendor SKU).
+- `GET  /stock/sim-cards/summary` — unit counts grouped by (Innoviti SKU × Vendor SKU) with a per-state breakdown, mirroring PT/BS. For SIM rows whose `vendor_sku_id` is still `NULL` (rows loaded before the loader was taught to resolve via `(owner, vendor_sku_number)`), the row lands in the NULL-Vendor-SKU group — same fall-back behaviour PT/BS already use.
 
 ### Validation rules (at load time)
-- `sku_number` (source file column): SIM Card loads identify the row by the **Innoviti SKU number** (`sku_number`) — not the Vendor SKU Number, because SIM card files carry no `owner` column to disambiguate a vendor SKU number against (see §6.5). Must resolve to an existing, non-soft-deleted SKU whose SKU Type is `SIM Card`. Otherwise `sku_not_found`.
+- `owner` (source file column, **required**): must resolve to an existing, non-soft-deleted Vendor. Match is **case-insensitive on `company_name`**. Otherwise → `owner_not_found`. Resolved first because the SKU lookup below depends on it. Same rule as Payment Terminal / Base Station Master §2 / §4.
+- `sku_number` (source file column): SIM Card loads identify the **Innoviti SKU** by `sku_number` (the SIM master continues to require a non-null `sku_id`). Must resolve to an existing, non-soft-deleted SKU whose SKU Type is `SIM Card`. Otherwise `sku_not_found`.
+- `vendor_sku_number` (source file column, **optional during transition**): when supplied, resolves to a Vendor SKU row via `(owner_vendor_id, vendor_sku_number)` and populates `vendor_sku_id` + `vendor_sku_number_snapshot`. When omitted, the row loads with both Vendor-SKU columns left NULL — same fall-back PT/BS use for legacy rows. Once the SIM load template is updated to require `vendor_sku_number`, this field flips to **required** and reuses PT/BS error codes (`vendor_sku_not_found`, `vendor_sku_ambiguous`).
 - `sim_card_number`: required; 1–50 chars; trimmed; not blank.
+- `date_of_purchase` (source file column, **optional**): when supplied, must parse as `YYYY-MM-DD` or `DD/MM/YYYY`, else `bad_format`. When omitted or blank, stored as NULL. Same rule and error code as Payment Terminal / Base Station Master.
 - `description` (source file column, **optional**): captured into `sku_description_snapshot`; falls back to the resolved SKU's description when unmapped or blank.
 - The SKU **name is not a source file column** — always derived from the SKU resolved by `sku_number`; any name/model column in the file is ignored.
-- Uniqueness: `(sku_id, sim_card_number)` not present in any non-deleted row. Otherwise `duplicate_index`.
+- Uniqueness: `(sku_id, sim_card_number)` not present in any non-deleted row. Otherwise `duplicate_index`. The `vendor_sku_id` and `owner_vendor_id` columns do **not** participate in the uniqueness rule — SIM identity remains keyed on Innoviti SKU + SIM number, to keep the existing index intact and avoid retroactive collisions on legacy rows.
 - Server-set fields (`present_location_id`, `present_location_since`, `last_audited_at`, `state`) ignore any file mapping per §1.3.
-
-> NOTE: The source spec does not mention an `owner` field on SIM Card Master. Phase 2 does not require it on the SIM card object. Override if SIM cards should also carry an `owner_vendor_id`.
 
 ### Business rules / invariants
 - Every loaded row is created `Active` with location fields NULL.
@@ -223,11 +228,16 @@ This subsection is the single source of truth for how `present_location`, `prese
 
 ### Cross-object dependencies (Phase 1)
 - SKU with `sku_type.name = 'SIM Card'` must exist.
+- Vendor must exist for every `owner` value in the file (mirrors Payment Terminal / Base Station Master).
 
 ### Acceptance
 - A row with a SIM number that already exists for the same SKU is rejected as `duplicate_index`.
 - A row whose SKU resolves to a non-SIM-Card type is rejected as `sku_not_found`.
-- All loaded rows have `state = 'Active'`, `present_location_id = NULL`, `last_audited_at = NULL`.
+- A row whose `owner` doesn't match any Vendor produces exactly one `owner_not_found` error; that row is not loaded.
+- A row whose `owner` resolves to a soft-deleted Vendor is also rejected as `owner_not_found`.
+- A row that supplies a `vendor_sku_number` resolving against `(owner_vendor_id, vendor_sku_number)` populates `vendor_sku_id` + `vendor_sku_number_snapshot`; a row that omits `vendor_sku_number` loads successfully with both columns left NULL.
+- A row that supplies a `date_of_purchase` in `YYYY-MM-DD` or `DD/MM/YYYY` stores it; an unparseable value is rejected as `bad_format`; an omitted value loads with `date_of_purchase = NULL`.
+- All loaded rows have `state = 'Active'`, `present_location_id = NULL`, `last_audited_at = NULL`, and `owner_vendor_id` set to the resolved Vendor.
 
 ---
 

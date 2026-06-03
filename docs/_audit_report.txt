@@ -1,0 +1,275 @@
+﻿
+
+
+
+
+
+3.3 Audit Reports
+
+Audit Reports section appears under Reports for Admin and Store users.  Admin can review the PAR reports for all users, while Store user can review for ASO users.  Upon clicking the 
+tab
+ the PAR reports for various users are listed as follows:
+
+
+
+
+PAR AIN Index
+
+
+User who did the audit
+
+
+Role of user
+
+
+Location of the user
+
+
+Date/Time of report creation
+
+
+Status: Pending, Incomplete, Approved, Rejected, Cancelled.
+
+
+
+Upon clicking the PAR AIN 
+Index
+ the PAR tables in that report are shown.
+
+
+
+3.3.1 Audit Reports: Store User
+
+
+
+For a Store user clicking on Audit Reports only the ASO user reports will be shown.  Upon clicking any of the PAR AIN index, based on the Status of the PAR report the following actions are possible:
+
+
+
+
+In case the PAR report was Approved, then the report is only 
+a read only
+ and can be downloaded.
+
+
+In case the PAR report was Incomplete then the Auditor can see a Cancel button at the top, below which the following fields and the report are shown:
+
+
+PAR AIN Index
+
+
+User who did the audit
+
+
+Role of user
+
+
+Location of the user
+
+
+Date/Time of report creation
+
+
+Status: Pending, Incomplete, Approved, Rejected, Cancelled.
+
+
+
+
+and on pressing Cancel that a Confirmation screen comes up, which if accepted the report is Cancelled and its status updated.
+
+
+In case the PAR report is Rejected or Pending, then the report opens with the following details at the top:
+
+
+PAR AIN Index
+
+
+User who did the audit
+
+
+Role of user
+
+
+Location of the user
+
+
+Date/Time of report creation
+
+
+Status: Pending, Incomplete, Approved, Rejected, Cancelled.
+
+
+
+There is also a button Submit.
+
+
+
+Below that 
+the Table
+ 1 and Table 2 are shown.  Against each row of these tables two columns open:
+
+
+
+Auditor
+ Remarks
+
+
+Status
+
+
+
+The Status is automatically set as follows:
+
+
+For all cases where the Matched column has a green tick and the Remarks column is blank, the status is set as Approved.
+
+
+The rows move to the bottom of the table.
+
+
+
+For all other cases the Auditor reviews the data, puts in their remark and changes the status for that row to either Approved or Rejected.  If they mark a row as 
+Approved
+ then it automatically moves to the bottom of the table.
+
+
+
+The Status shown at the top for the overall report changes as per the following rules:
+
+
+If any row is Rejected, then the overall status is Rejected
+
+
+Else it is Approved.
+
+
+
+Upon pressing Submit the overall status that is dynamically updated as the status of each row is updated is shown as the PAR in the Audit Reports section.
+
+
+
+3.3.2 Audit Reports: Admin User
+
+
+
+For an Admin user clicking on Audit Reports the Store user and ASO user reports will be shown.  Upon clicking any of the PAR AIN index, based on the Status of the PAR report the following actions are possible:
+
+
+
+
+In case the PAR report was Approved, then the report is only 
+a read only
+ and can be downloaded.
+
+
+In case the PAR report was Incomplete then the Auditor can see a Cancel button at the top, below which the following fields and the report are shown:
+
+
+PAR AIN Index
+
+
+User who did the audit
+
+
+Role of user
+
+
+Location of the user
+
+
+Date/Time of report creation
+
+
+Status: Pending, Incomplete, Approved, Rejected, Cancelled.
+
+
+
+
+and on pressing Cancel that a Confirmation screen comes up, which if accepted the report is Cancelled and its status updated.
+
+
+In case the PAR report is Rejected or Pending, then the report opens with the following details at the top:
+
+
+PAR AIN Index
+
+
+User who did the audit
+
+
+Role of user
+
+
+Location of the user
+
+
+Date/Time of report creation
+
+
+Status: Pending, Incomplete, Approved, Rejected, Cancelled.
+
+
+
+There is also a button Submit.
+
+
+
+
+Below this
+ there is a summary report as follows:
+
+Serial Type SKUs: Approved Qty, Pending Qty
+
+Accessory Type SKUs: Approved Qty, Pending Qty.
+
+
+
+
+
+Below that 
+the Table
+ 1 and Table 2 (or in case of Store User these Tables by each area) are shown.   Only 25 rows of each table are shown in a page with pagination enabling subsequent pages to be seen.  Against each row of these tables two columns open:
+
+
+
+Auditor
+ Remarks
+
+
+Status
+
+
+
+The Status is automatically set as follows:
+
+
+For all Serial cases where the Matched column has a green tick and the Remarks column is blank, the status is set as Approved.
+
+
+For all Accessory cases where the Missing count is zero or less than zero the status is set to Approved.
+
+
+The rows move to the bottom of the table.
+
+
+
+For all other cases the Auditor reviews the data, puts in their remark and changes the status for that row to either Approved or Rejected.  If they mark a row as 
+Approved
+ then it automatically moves to the bottom of the table.
+
+
+
+The Status shown at the top for the overall report changes as per the following rules:
+
+
+If any row is Rejected, then the overall status is Rejected
+
+
+Else it is Approved.
+
+
+
+Upon pressing Submit the overall status that is dynamically updated as the status of each row is updated is shown as the PAR in the Audit Reports section.
+
+
+

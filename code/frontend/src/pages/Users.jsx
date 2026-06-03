@@ -48,6 +48,9 @@ export default function Users() {
   const innoviti = vendors.find((v) => v.is_seed || v.company_name === 'Innoviti');
   const isInnovitiUser = edit ? Number(edit.vendor_id) === innoviti?.vendor_id : false;
   const editingExisting = !!(edit && edit.user_id);
+  // ASO users carry no address (task1.md §3) — hide the whole Address section.
+  const selectedTypeCode =
+    types.find((t) => Number(t.user_type_id) === Number(edit?.user_type_id))?.code || edit?.user_type_code;
 
   const startNew = () => { setErrors({}); setEdit({ ...EMPTY, vendor_id: innoviti?.vendor_id ?? '' }); };
   const closeEdit = () => { setErrors({}); setEdit(null); };
@@ -300,16 +303,32 @@ export default function Users() {
               </div>
             )}
 
-            <h3>Address</h3>
-            <div className="full"><label>Address line 1</label><input value={edit.address_line_1 || ''} onChange={(e) => setEdit({ ...edit, address_line_1: e.target.value })} /></div>
-            <div className="full"><label>Address line 2</label><input value={edit.address_line_2 || ''} onChange={(e) => setEdit({ ...edit, address_line_2: e.target.value })} /></div>
-            <PincodeField
-              pincode={edit.pincode}
-              city={edit.city}
-              state={edit.state}
-              onChange={(p) => setEdit({ ...edit, ...p })}
-            />
-            {fieldError('pincode') && <div className="full"><div className="error-text">{fieldError('pincode')}</div></div>}
+            {selectedTypeCode !== 'ASO' && (
+              <>
+                <h3>Address</h3>
+                <div className="full"><label>Address line 1</label><input value={edit.address_line_1 || ''} onChange={(e) => setEdit({ ...edit, address_line_1: e.target.value })} /></div>
+                <div className="full"><label>Address line 2</label><input value={edit.address_line_2 || ''} onChange={(e) => setEdit({ ...edit, address_line_2: e.target.value })} /></div>
+                <PincodeField
+                  pincode={edit.pincode}
+                  city={edit.city}
+                  state={edit.state}
+                  onChange={(p) => setEdit({ ...edit, ...p })}
+                />
+                {fieldError('pincode') && <div className="full"><div className="error-text">{fieldError('pincode')}</div></div>}
+              </>
+            )}
+
+            {editingExisting && !['SA', 'ADMIN'].includes(edit.user_type_code) && (
+              <div className="full" style={{ borderTop: '1px solid var(--border, #e5e7eb)', marginTop: 8, paddingTop: 12 }}>
+                <label>Assigned Location</label>
+                <p className="meta" style={{ margin: 0 }}>
+                  {edit.location_id
+                    ? (edit.location_name || `Location #${edit.location_id}`)
+                    : 'Not assigned.'}
+                </p>
+                <div className="help-text">Set from Manage Locations → Assigned Users; not editable here.</div>
+              </div>
+            )}
           </div>
         </Modal>
       )}

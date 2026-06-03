@@ -1,33 +1,49 @@
--- 009: Stock units (Payment Terminal / Base Station) anchor to a vendor SKU.
+-- 009: Stock units (Payment Terminal / Base Station / SIM Card) anchor to a
+-- vendor SKU.
 --
 -- Phase 2 of the many-to-many rework. A loaded unit belongs to its vendor SKU,
 -- not to a single Innoviti SKU — the Innoviti SKU(s) are derived through
 -- sku_vendor_links. View Stock therefore rolls a unit up under every linked
--- Innoviti SKU. SIM Cards are unchanged: they still match by Innoviti SKU
--- number and keep sku_id.
+-- Innoviti SKU. SIM Cards gain the same nullable `vendor_sku_id` column so
+-- the three Master tables share a uniform shape; the SIM loader has
+-- historically resolved by Innoviti SKU number rather than by Vendor SKU,
+-- so existing SIM rows keep `vendor_sku_id = NULL` (no back-fill is possible
+-- because the SIM master has no owner-vendor column to disambiguate against).
+-- Future SIM loads that populate `vendor_sku_number_snapshot` can be
+-- back-filled by a later migration once an `owner_vendor_id` is added or
+-- the loader records a vendor SKU directly.
 --
 -- Migrations re-run on every boot, so everything here is idempotent.
 
 ALTER TABLE payment_terminal_master ADD COLUMN IF NOT EXISTS vendor_sku_id INTEGER REFERENCES vendor_skus(vendor_sku_id);
 ALTER TABLE base_station_master     ADD COLUMN IF NOT EXISTS vendor_sku_id INTEGER REFERENCES vendor_skus(vendor_sku_id);
+ALTER TABLE sim_card_master         ADD COLUMN IF NOT EXISTS vendor_sku_id INTEGER REFERENCES vendor_skus(vendor_sku_id);
 
 -- A Payment Terminal / Base Station row no longer carries one Innoviti SKU,
--- so sku_id and its snapshot become optional on those two tables.
+-- so sku_id and its snapshot become optional on those two tables. SIM Card
+-- rows still require `sku_id` (the SIM loader continues to match by Innoviti
+-- SKU number), so those NOT NULL constraints remain.
 ALTER TABLE payment_terminal_master ALTER COLUMN sku_id DROP NOT NULL;
 ALTER TABLE payment_terminal_master ALTER COLUMN sku_number_snapshot DROP NOT NULL;
 ALTER TABLE base_station_master     ALTER COLUMN sku_id DROP NOT NULL;
 ALTER TABLE base_station_master     ALTER COLUMN sku_number_snapshot DROP NOT NULL;
 
--- A serial number is unique per vendor SKU among live rows.
+-- A serial number is unique per vendor SKU among live rows. For SIMs the
+-- canonical uniqueness stays (sku_id, sim_card_number) — see migration 002 —
+-- because SIMs match by Innoviti SKU, not by vendor SKU. The vendor-SKU
+-- index on SIMs is non-unique and exists purely for join performance.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ptm_vsku_serial
   ON payment_terminal_master (vendor_sku_id, serial_number) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bsm_vsku_serial
   ON base_station_master (vendor_sku_id, serial_number) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_ptm_vendor_sku ON payment_terminal_master(vendor_sku_id);
 CREATE INDEX IF NOT EXISTS idx_bsm_vendor_sku ON base_station_master(vendor_sku_id);
+CREATE INDEX IF NOT EXISTS idx_scm_vendor_sku ON sim_card_master(vendor_sku_id);
 
 -- Back-fill vendor_sku_id on existing rows from the recorded vendor SKU number
 -- + owner vendor. Rows loaded before the snapshot column existed stay NULL.
+-- SIM cards have no `owner_vendor_id` and historically no
+-- `vendor_sku_number_snapshot`, so no back-fill is attempted for SIMs here.
 UPDATE payment_terminal_master m
    SET vendor_sku_id = vs.vendor_sku_id
   FROM vendor_skus vs

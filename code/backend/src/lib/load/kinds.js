@@ -49,7 +49,9 @@ export const KINDS = {
     targetFields: [
       { field: 'sku_number',      type: 'string', required: true,  synonyms: ['sku', 'sku#', 'sku_no', 'sku no', 'partnumber', 'part number'] },
       { field: 'description',     type: 'string', required: false, synonyms: ['desc', 'sku description', 'skudescription', 'notes', 'remarks', 'details'] },
+      { field: 'owner',           type: 'string', required: true,  synonyms: ['vendor', 'supplier', 'owner name', 'ownername'] },
       { field: 'sim_card_number', type: 'string', required: true,  synonyms: ['sim', 'sim number', 'simnumber', 'sim#', 'iccid', 'sim no', 'sim_no'] },
+      { field: 'date_of_purchase', type: 'date',  required: false, synonyms: ['purchase date', 'purchasedate', 'date purchased', 'date of buy', 'buydate', 'dop', 'invoice date'] },
       ...COMMON_SERVER_SET,
     ],
   },
