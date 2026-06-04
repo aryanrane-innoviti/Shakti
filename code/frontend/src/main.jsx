@@ -38,7 +38,10 @@ function HomeRedirect() {
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <GlobalLoader force />;
+  // While the auth check is in flight, render nothing — the app-wide
+  // GlobalLoader (mounted in App) already covers the screen. Returning null
+  // here, rather than redirecting, avoids a premature bounce to /login.
+  if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (user.initial_setup_required) return <Navigate to="/setup" replace />;
   return children;
@@ -46,7 +49,7 @@ function Protected({ children }) {
 
 function SetupGate({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <GlobalLoader force />;
+  if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
   if (!user.initial_setup_required) return <HomeRedirect />;
   return children;
@@ -67,6 +70,10 @@ function App() {
   return (
     <AuthProvider>
       <ToastProvider>
+        {/* Single, app-wide loading overlay — persists across auth, route
+            changes and page fetches so there is never a second instance to
+            blink in and out. */}
+        <GlobalLoader />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/reset" element={<Reset />} />

@@ -1,85 +1,75 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { subscribeLoading } from '../lib/api.js';
+import { useAuth } from '../lib/auth.jsx';
+
+// Wait out trivially fast requests so they don't flash the overlay.
+const SHOW_DELAY = 120;
+// Keep the loader up briefly after the last request settles. This is what
+// bridges the gaps — between chained requests, and between the initial auth
+// check and the first page fetch — so the whole load reads as one continuous
+// loader instead of blinking off and on.
+const HIDE_DELAY = 250;
 
 /**
- * Transparent "S" spinner shown whenever an API request is in flight.
- * It subscribes to the request-activity counter in api.js, so every
- * api.get / post / patch / del / upload call triggers it automatically.
+ * The single, app-wide loading overlay.
  *
- * A short delay before showing avoids a flash on very fast requests.
+ * Mounted ONCE at the App root (see main.jsx) so it persists across the auth
+ * check, route changes and page data fetches. There is never a second
+ * instance to unmount/remount, so the overlay animates in exactly once and
+ * never blinks mid-session.
  *
- * Pass `force` to show the spinner unconditionally — used for the
- * initial auth check on a full page refresh, before any layout renders.
+ * Visible whenever auth is still resolving OR any non-silent API request is in
+ * flight. Showing waits out very fast requests; hiding is debounced so a chain
+ * of sequential requests (and the auth-check → first-fetch handoff) stays
+ * covered the whole way through.
  */
-export default function GlobalLoader({ force = false }) {
-  // Start visible so the very first mount inside Layout bridges the gap
-  // between the auth-gate force-loader unmounting and the new page firing
-  // its initial API request (otherwise the page paints uncovered for a
-  // few frames before the subscriber kicks in).
-  const [visible, setVisible] = useState(true);
+export default function GlobalLoader() {
+  const { loading: authLoading } = useAuth();
+  const [busy, setBusy] = useState(false);
+
+  // One subscription to the global request-activity counter in api.js.
+  useEffect(() => subscribeLoading(setBusy), []);
+
+  const active = authLoading || busy;
+  const [visible, setVisible] = useState(active);
+  const showTimer = useRef();
+  const hideTimer = useRef();
 
   useEffect(() => {
-    if (force) return undefined;
-    let showTimer;
-    let hideTimer;
-    let graceTimer;
-    let pastGrace = false;
-    let busyNow = false;
-
-    const cancelHide = () => {
-      if (hideTimer) { clearTimeout(hideTimer); hideTimer = undefined; }
+    const clearShow = () => {
+      if (showTimer.current) { clearTimeout(showTimer.current); showTimer.current = undefined; }
     };
-    const scheduleHide = () => {
-      cancelHide();
-      // Hold the loader for a short window after the last in-flight request
-      // ends. Pages often chain awaits (request → request → request); without
-      // this delay the loader hides between each one and the page flashes
-      // through. A follow-up request within the window cancels the hide.
-      hideTimer = setTimeout(() => {
-        hideTimer = undefined;
+    const clearHide = () => {
+      if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = undefined; }
+    };
+
+    if (active) {
+      clearHide();
+      if (authLoading) {
+        // Refresh / auth transitions cover the screen instantly — there is
+        // nothing meaningful to paint underneath yet.
+        clearShow();
+        setVisible(true);
+      } else if (!showTimer.current) {
+        // A mid-session request waits out the show delay so quick calls don't
+        // flash the overlay.
+        showTimer.current = setTimeout(() => {
+          showTimer.current = undefined;
+          setVisible(true);
+        }, SHOW_DELAY);
+      }
+    } else {
+      clearShow(); // a queued show is no longer wanted
+      hideTimer.current = setTimeout(() => {
+        hideTimer.current = undefined;
         setVisible(false);
-      }, 200);
-    };
-    const scheduleShow = () => {
-      if (showTimer) return; // don't reset; let the original 150ms tick run
-      showTimer = setTimeout(() => {
-        showTimer = undefined;
-        // Suppress the show if all requests already completed in under 150ms.
-        if (busyNow) setVisible(true);
-      }, 150);
-    };
+      }, HIDE_DELAY);
+    }
 
-    // Initial-mount bridging: the auth-gate force-loader has just unmounted
-    // and the new page's useEffect hasn't fired its API request yet. Keep
-    // the loader visible across that gap.
-    graceTimer = setTimeout(() => {
-      pastGrace = true;
-      if (!busyNow) scheduleHide();
-    }, 200);
+    return () => { clearShow(); clearHide(); };
+  }, [active, authLoading]);
 
-    const unsubscribe = subscribeLoading((busy) => {
-      busyNow = busy;
-      if (!pastGrace) {
-        if (busy) setVisible(true);
-        return;
-      }
-      if (busy) {
-        cancelHide();
-        scheduleShow();
-      } else {
-        scheduleHide();
-      }
-    });
-
-    return () => {
-      if (showTimer) clearTimeout(showTimer);
-      cancelHide();
-      clearTimeout(graceTimer);
-      unsubscribe();
-    };
-  }, [force]);
-
-  if (!force && !visible) return null;
+  if (!visible) return null;
 
   return (
     <div className="global-loader" role="status" aria-label="Loading">

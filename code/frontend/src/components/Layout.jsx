@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
-import GlobalLoader from './GlobalLoader.jsx';
 
 /**
  * Role-aware navigation:
@@ -120,7 +119,6 @@ export default function Layout() {
       />
 
       <main className="main">
-        <GlobalLoader />
         <Outlet />
       </main>
     </div>

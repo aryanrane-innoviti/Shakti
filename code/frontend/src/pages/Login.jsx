@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth.jsx';
-import GlobalLoader from '../components/GlobalLoader.jsx';
 
 export default function Login() {
   const { user, login } = useAuth();
@@ -31,7 +30,6 @@ export default function Login() {
 
   return (
     <div className="auth-shell">
-      <GlobalLoader />
       <section className="auth-poster">
         <div className="topline">
           <span className="pip" /> Shakti / Operations Console
