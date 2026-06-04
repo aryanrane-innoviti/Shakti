@@ -60,6 +60,42 @@ async function request(method, path, body, opts = {}) {
   }
 }
 
+// Binary download. `request` only handles text/JSON, so file endpoints (e.g.
+// the audit-report XLSX) go through here: it fetches a blob, reads the
+// filename from Content-Disposition, and triggers a browser save. It bumps the
+// same activity counter as `request`, so the global loader shows during the
+// download too.
+export async function download(path, fallbackName = 'download') {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  activeRequests += 1; notifyLoading();
+  try {
+    const res = await fetch(BASE + path, { headers });
+    if (!res.ok) {
+      let msg = res.statusText || `HTTP ${res.status}`;
+      try { const j = await res.json(); if (j && j.error) msg = j.error; } catch { /* not JSON */ }
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const name = m ? m[1] : fallbackName;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } finally {
+    activeRequests -= 1; notifyLoading();
+  }
+}
+
 export const api = {
   get: (p, opts) => request('GET', p, undefined, opts),
   post: (p, b, opts) => request('POST', p, b, opts),
@@ -71,4 +107,5 @@ export const api = {
     fd.append('file', file);
     return request('POST', p, fd);
   },
+  download,
 };

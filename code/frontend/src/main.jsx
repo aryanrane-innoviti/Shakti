@@ -26,6 +26,8 @@ import Backups        from './pages/Backups.jsx';
 import LoadStock      from './pages/LoadStock.jsx';
 import Stock          from './pages/Stock.jsx';
 import Audit              from './pages/Audit.jsx';
+import AuditReports      from './pages/AuditReports.jsx';
+import AuditReportDetail from './pages/AuditReportDetail.jsx';
 
 import './styles.css';
 
@@ -33,6 +35,8 @@ function HomeRedirect() {
   const { user } = useAuth();
   // ASO users have no Dashboard access — land them on their Audit screen.
   if (user?.user_type_code === 'ASO') return <Navigate to="/audit" replace />;
+  // STU users have no Dashboard either — land them on their Audit Reports screen.
+  if (user?.user_type_code === 'STU') return <Navigate to="/audit-reports" replace />;
   return <Navigate to="/dashboard" replace />;
 }
 
@@ -107,6 +111,11 @@ function App() {
             {/* Phase 3 (ASO slice) — ASO audit screen. ASO-location assignment
                 lives on the Locations Modify form (Assign ASO Users panel). */}
             <Route path="audit"               element={<RoleGate allow={['ASO']}><Audit /></RoleGate>} />
+
+            {/* Phase 3 (Report slice) — Store review of ASO-authored PARs.
+                STU is the reviewer; SA/ADMIN get read-only oversight. */}
+            <Route path="audit-reports"       element={<RoleGate allow={['ADMIN', 'SA', 'STU']}><AuditReports /></RoleGate>} />
+            <Route path="audit-reports/:ain"  element={<RoleGate allow={['ADMIN', 'SA', 'STU']}><AuditReportDetail /></RoleGate>} />
           </Route>
 
           <Route path="*" element={<HomeRedirect />} />

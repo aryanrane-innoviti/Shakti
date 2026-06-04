@@ -109,6 +109,25 @@ export function requireAso(req, res, next) {
   return res.status(403).json({ error: 'forbidden' });
 }
 
+// Phase 3 (Report slice) — Store review of ASO-authored PARs.
+//
+// Reader access (list / read-one / download): STU is the active reviewer, SA
+// and Admin are read-only oversight. ASO and all other operational types are
+// excluded entirely (an ASO's own history stays on /audit).
+export function requireReportReader(req, res, next) {
+  if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
+  if (['STU', 'SA', 'ADMIN'].includes(req.session.user_type_code)) return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+
+// Reviewer access (cancel / row review / submit): STU only this phase.
+// Activating the Admin reviewer role next phase = adding 'ADMIN' here.
+export function requireReportReviewer(req, res, next) {
+  if (!req.session) return res.status(401).json({ error: 'unauthenticated' });
+  if (req.session.user_type_code === 'STU') return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+
 export async function attachInitialSetupFlag(req, res, next) {
   try {
     if (!req.session) return next();

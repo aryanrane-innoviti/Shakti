@@ -19,6 +19,8 @@ const NAV = {
     { to: '/vendors',    label: 'Vendors' },
     { to: '/locations',  label: 'Locations' },
     { to: '/skus',       label: 'Innoviti SKUs' },
+    { section: 'Audit' },
+    { to: '/audit-reports', label: 'Audit Reports' },
     { section: 'Governance' },
     { to: '/user-types', label: 'User Types' },
     { to: '/backups',    label: 'Backups' },
@@ -39,11 +41,17 @@ const NAV = {
     { to: '/load-stock', label: 'Load Stock' },
     { to: '/stock',      label: 'View Stock' },
     { section: 'Audit' },
+    { to: '/audit-reports', label: 'Audit Reports' },
     { to: '/change-log', label: 'Change Log' },
   ],
   // ASO users see only the Audit screen (and the identity panel for sign-out).
   ASO: [
     { to: '/audit', label: 'Audit' },
+  ],
+  // STU users review ASO-authored audit reports (Phase 3 Report slice).
+  STU: [
+    { section: 'Audit' },
+    { to: '/audit-reports', label: 'Audit Reports' },
   ],
 };
 

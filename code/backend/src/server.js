@@ -24,6 +24,7 @@ import loadRoutes from './routes/loads.js';
 import stockRoutes from './routes/stock.js';
 import auditSessionRoutes, { runAuditSuspensionJob } from './routes/auditSessions.js';
 import accessoryStockRoutes from './routes/accessoryStock.js';
+import auditReportRoutes from './routes/auditReports.js';
 
 async function main() {
   await initDb();
@@ -58,6 +59,9 @@ async function main() {
   // audit-location router.
   app.use('/audit-sessions', auditSessionRoutes);
   app.use('/accessory-stock', accessoryStockRoutes);
+  // Phase 3 Report slice — Store review of ASO-authored PARs (STU reviewer;
+  // SA/Admin read-only oversight). Owns PendingReview -> Completed/Rejected.
+  app.use('/audit-reports', auditReportRoutes);
 
   app.use((err, req, res, _next) => {
     if (err instanceof ValidationError) {
