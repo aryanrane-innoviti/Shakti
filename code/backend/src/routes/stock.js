@@ -7,7 +7,9 @@ const router = Router();
 // Each master is read-only in Phase 2. Filters: state, present_location_id
 // (accepts the literal 'null' for unaudited rows); plus per-kind:
 //   Payment Terminal / Base Station — vendor_sku_id (accepts 'null' for rows
-//     with no resolved vendor SKU), owner_vendor_id, date_of_purchase_from/_to.
+//     with no resolved vendor SKU), sku_id (accepts 'null'; used to pin a
+//     vendor-SKU-less roll-up group to its own Innoviti SKU), owner_vendor_id,
+//     date_of_purchase_from/_to.
 //   SIM Card — sku_id, owner_vendor_id, date_of_purchase_from/_to.
 function buildFilters(req, opts) {
   const where = ['m.deleted_at IS NULL'];
@@ -22,6 +24,15 @@ function buildFilters(req, opts) {
     } else if (q.vendor_sku_id) {
       params.push(Number(q.vendor_sku_id));
       where.push(`m.vendor_sku_id = $${params.length}`);
+    }
+    // A roll-up group with no vendor SKU is keyed by the unit's own Innoviti
+    // SKU, so the unit list disambiguates by sku_id too ('null' = a unit with
+    // neither a vendor SKU nor an Innoviti SKU).
+    if (q.sku_id === 'null') {
+      where.push(`m.sku_id IS NULL`);
+    } else if (q.sku_id) {
+      params.push(Number(q.sku_id));
+      where.push(`m.sku_id = $${params.length}`);
     }
   } else if (q.sku_id) {
     params.push(Number(q.sku_id));
@@ -126,9 +137,14 @@ function makeSummary(opts) {
       let rows;
       if (opts.hasVendorSku) {
         // LEFT JOINs keep units visible even when their vendor SKU has no live
-        // link (or no vendor SKU at all) — those land in a NULL group.
+        // link (or no vendor SKU at all). When the vendor-SKU link chain yields
+        // no Innoviti SKU, fall back to the unit's own sku_id / snapshot so a
+        // unit loaded without a vendor SKU (e.g. legacy rows) still shows its
+        // Innoviti SKU instead of landing in an unlabelled NULL group.
         rows = await many(
-          `SELECT s.sku_id, s.sku_number, s.sku_name,
+          `SELECT COALESCE(s.sku_id, m.sku_id)                  AS sku_id,
+                  COALESCE(s.sku_number, m.sku_number_snapshot) AS sku_number,
+                  COALESCE(s.sku_name, m.sku_name_snapshot)     AS sku_name,
                   vs.vendor_sku_id, vs.vendor_sku_number,
                   m.state, COUNT(*)::int AS n
              FROM ${opts.table} m
@@ -136,7 +152,10 @@ function makeSummary(opts) {
              LEFT JOIN sku_vendor_links l ON l.vendor_sku_id = vs.vendor_sku_id AND l.deleted_at IS NULL
              LEFT JOIN skus s            ON s.sku_id = l.sku_id
              ${whereSql}
-            GROUP BY s.sku_id, s.sku_number, s.sku_name, vs.vendor_sku_id, vs.vendor_sku_number, m.state`,
+            GROUP BY COALESCE(s.sku_id, m.sku_id),
+                     COALESCE(s.sku_number, m.sku_number_snapshot),
+                     COALESCE(s.sku_name, m.sku_name_snapshot),
+                     vs.vendor_sku_id, vs.vendor_sku_number, m.state`,
           params
         );
       } else {

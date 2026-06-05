@@ -99,6 +99,11 @@ export default function Stock() {
       const parts = [];
       if (def.hasVendorSku) {
         parts.push(`vendor_sku_id=${encodeURIComponent(r.vendor_sku_id ?? 'null')}`);
+        // A group with no vendor SKU is keyed by the unit's own Innoviti SKU
+        // (the summary falls back to it), so pin the unit list to that sku_id.
+        if (r.vendor_sku_id == null) {
+          parts.push(`sku_id=${encodeURIComponent(r.sku_id ?? 'null')}`);
+        }
       } else {
         parts.push(`sku_id=${r.sku_id}`);
       }
