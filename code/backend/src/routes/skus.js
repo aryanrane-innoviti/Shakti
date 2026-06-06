@@ -20,11 +20,6 @@ const upload = multer({
   },
 });
 
-async function isPaymentTerminal(sku_type_id) {
-  const row = await one(`SELECT name FROM sku_types WHERE sku_type_id = $1`, [sku_type_id]);
-  return row && row.name === 'Payment Terminal';
-}
-
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const { sku_type_id, status, vendor_id, include_deleted } = req.query;
@@ -88,25 +83,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       [id]
     );
     const vendor_sku_ids = links.map((l) => l.vendor_sku_id);
-    // Resolve Payment Terminal component SKUs (adaptors, USB cables) so the UI can render
-    // them with status and highlight inactive ones in red.
-    const componentIds = [
-      ...(Array.isArray(row.adaptor_sku_ids) ? row.adaptor_sku_ids : []),
-      ...(Array.isArray(row.usb_cable_sku_ids) ? row.usb_cable_sku_ids : []),
-    ].map(Number).filter(Number.isFinite);
-    let componentMap = new Map();
-    if (componentIds.length) {
-      const comps = await many(
-        `SELECT sku_id, sku_number, sku_name, status FROM skus WHERE sku_id = ANY($1::int[])`,
-        [componentIds]
-      );
-      componentMap = new Map(comps.map((c) => [c.sku_id, c]));
-    }
-    const adaptors = (Array.isArray(row.adaptor_sku_ids) ? row.adaptor_sku_ids : [])
-      .map((aid) => componentMap.get(Number(aid))).filter(Boolean);
-    const usb_cables = (Array.isArray(row.usb_cable_sku_ids) ? row.usb_cable_sku_ids : [])
-      .map((aid) => componentMap.get(Number(aid))).filter(Boolean);
-    res.json({ ...row, vendor_sku_ids, adaptors, usb_cables });
+    // Adaptor / USB-cable associations now live on the Vendor SKU (see
+    // routes/vendorSkus.js); the Innoviti SKU no longer carries them.
+    res.json({ ...row, vendor_sku_ids });
   } catch (e) { next(e); }
 });
 
@@ -159,44 +138,12 @@ async function validateSkuCreate(body) {
       `SKU type "${st.name}" requires Serial tracking`,
       { stm: `"${st.name}" SKUs must be tracked by Serial number. "None" is not allowed for this type.` }
     );
-  if (st.name === 'Payment Terminal') {
-    const adaptors = Array.isArray(body.adaptor_sku_ids) ? body.adaptor_sku_ids : [];
-    const usbs = Array.isArray(body.usb_cable_sku_ids) ? body.usb_cable_sku_ids : [];
-    if (!adaptors.length || !usbs.length) {
-      const adaptorsExist = await one(
-        `SELECT COUNT(*)::int AS c FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
-          WHERE st.name = 'Adaptors' AND s.deleted_at IS NULL`
-      );
-      const usbsExist = await one(
-        `SELECT COUNT(*)::int AS c FROM skus s JOIN sku_types st ON st.sku_type_id = s.sku_type_id
-          WHERE st.name = 'USB cables' AND s.deleted_at IS NULL`
-      );
-      const missing = [];
-      if (!adaptorsExist.c) missing.push('Adaptor SKU');
-      if (!usbsExist.c) missing.push('USB Cable SKU');
-      if (missing.length)
-        throw new ValidationError(
-          `Cannot create Payment Terminal SKU — create ${missing.join(', ')} first`,
-          { sku_type_id: `missing prerequisite SKUs: ${missing.join(', ')}. Create them first.` }
-        );
-      throw new ValidationError(
-        'Payment Terminal requires adaptor and USB cable SKU selections',
-        {
-          adaptor_sku_ids: 'pick at least one adaptor SKU',
-          usb_cable_sku_ids: 'pick at least one USB cable SKU',
-        }
-      );
-    }
-  }
 }
 
 router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
   try {
     await validateSkuCreate(req.body);
     const idx = await nextIndex('sku');
-    const isPT = await isPaymentTerminal(req.body.sku_type_id);
-    const adaptors = isPT ? JSON.stringify(req.body.adaptor_sku_ids || []) : null;
-    const usbs = isPT ? JSON.stringify(req.body.usb_cable_sku_ids || []) : null;
 
     // Optional: vendor SKUs picked on the create screen are linked at the same
     // time. Innoviti SKUs may be created with zero links — the matching Vendor
@@ -220,13 +167,11 @@ router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
     const created = await withTransaction(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO skus (sku_number, sku_name, description, stm, sku_type_id,
-                            approx_price_moq, approx_price_unit, status,
-                            adaptor_sku_ids, usb_cable_sku_ids)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active', $8::jsonb, $9::jsonb) RETURNING *`,
+                            approx_price_moq, approx_price_unit, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'Active') RETURNING *`,
         [
           idx, req.body.sku_name, req.body.description || null, req.body.stm,
           req.body.sku_type_id, req.body.approx_price_moq || null, req.body.approx_price_unit || null,
-          adaptors, usbs,
         ]
       );
       const sku = rows[0];
@@ -285,16 +230,6 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
       if (req.body[f] !== undefined) {
         params.push(req.body[f] === '' ? null : req.body[f]);
         sets.push(`${f} = $${params.length}`);
-      }
-    }
-    if (await isPaymentTerminal(existing.sku_type_id)) {
-      if (req.body.adaptor_sku_ids !== undefined) {
-        params.push(JSON.stringify(req.body.adaptor_sku_ids));
-        sets.push(`adaptor_sku_ids = $${params.length}::jsonb`);
-      }
-      if (req.body.usb_cable_sku_ids !== undefined) {
-        params.push(JSON.stringify(req.body.usb_cable_sku_ids));
-        sets.push(`usb_cable_sku_ids = $${params.length}::jsonb`);
       }
     }
 

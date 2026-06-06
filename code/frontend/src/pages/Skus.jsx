@@ -7,13 +7,12 @@ import Modal from '../components/Modal.jsx';
 const EMPTY = {
   sku_name: '', description: '', stm: '', sku_type_id: '',
   approx_price_moq: '', approx_price_unit: '',
-  adaptor_sku_ids: [], usb_cable_sku_ids: [], vendor_sku_ids: [],
+  vendor_sku_ids: [],
 };
 
 export default function Skus() {
   const toast = useToast();
   const [skus, setSkus] = useState([]);           // filtered list — drives the table
-  const [allSkus, setAllSkus] = useState([]);     // unfiltered — drives the modal pickers
   const [types, setTypes] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [vendorSkus, setVendorSkus] = useState([]);
@@ -34,27 +33,21 @@ export default function Skus() {
     // routes/skus.js GET /). No per-row fetch needed.
     api.get('/skus' + (q ? '?' + q : '')).then(setSkus);
   };
-  const loadAll = () => api.get('/skus').then(setAllSkus);
   const loadVendorSkus = () => api.get('/vendor-skus').then(setVendorSkus);
   useEffect(() => { loadFiltered(); }, [filter]);
   useEffect(() => {
-    loadAll();
     loadVendorSkus();
     api.get('/sku-types').then(setTypes);
     api.get('/vendors').then(setVendors);
   }, []);
 
-  // Refresh pickers when the modal opens so freshly created prerequisites
-  // (component SKUs, vendor SKUs) show up.
+  // Refresh the vendor-SKU picker when the modal opens so freshly created
+  // vendor SKUs show up.
   useEffect(() => {
-    if (edit) {
-      loadAll();
-      loadVendorSkus();
-    }
+    if (edit) loadVendorSkus();
   }, [edit?.sku_id, edit?.sku_type_id]);
 
   const selectedType = types.find((t) => t.sku_type_id === Number(edit?.sku_type_id));
-  const isPaymentTerminal = selectedType?.name === 'Payment Terminal';
   const requiresSerial = !!selectedType?.serial_eligible;
 
   // When the user picks (or switches to) a serial-eligible type, force STM=Serial.
@@ -72,10 +65,6 @@ export default function Skus() {
       setEdit((prev) => ({ ...prev, vendor_sku_ids: [] }));
     }
   }, [selectedType?.sku_type_id]);
-  const adaptorType = types.find((t) => t.name === 'Adaptors');
-  const usbType = types.find((t) => t.name === 'USB cables');
-  const adaptorSkus = useMemo(() => allSkus.filter((s) => s.sku_type_id === adaptorType?.sku_type_id), [allSkus, adaptorType]);
-  const usbSkus     = useMemo(() => allSkus.filter((s) => s.sku_type_id === usbType?.sku_type_id),     [allSkus, usbType]);
   // Vendor SKUs of the same SKU Type — offered as a multi-select on create.
   const categoryVendorSkus = useMemo(
     () => (selectedType ? vendorSkus.filter((vs) => vs.sku_type_id === selectedType.sku_type_id) : []),
@@ -89,7 +78,6 @@ export default function Skus() {
       await api.post(`/skus/${s.sku_id}/status`);
       toast.push(`${s.sku_name} marked ${next}`, 'success');
       loadFiltered();
-      loadAll();
     } catch (e) {
       toast.push(e.data?.error || e.message || 'Status change failed', 'error');
     }
@@ -105,7 +93,6 @@ export default function Skus() {
       else await api.post('/skus', payload);
       setEdit(null);
       loadFiltered();
-      loadAll();
       toast.push('Saved', 'success');
     } catch (e) {
       const raw = e.data || {};
@@ -267,63 +254,6 @@ export default function Skus() {
               />
               {fieldError('approx_price_unit') && <div className="error-text">{fieldError('approx_price_unit')}</div>}
             </div>
-
-            {isPaymentTerminal && <>
-              <div className="full">
-                <label>Adaptor SKUs * <span className="muted" style={{ fontSize: 11 }}>· tick at least one</span></label>
-                {adaptorSkus.length === 0 ? (
-                  <div className="error-text">No Adaptor SKUs exist — create at least one first (Add SKU with type "Adaptors").</div>
-                ) : (
-                  <div className="check-list">
-                    {adaptorSkus.map((s) => {
-                      const checked = (edit.adaptor_sku_ids || []).includes(s.sku_id);
-                      return (
-                        <label key={s.sku_id} className={`check-item${checked ? ' checked' : ''}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const cur = new Set(edit.adaptor_sku_ids || []);
-                              if (e.target.checked) cur.add(s.sku_id); else cur.delete(s.sku_id);
-                              setEdit({ ...edit, adaptor_sku_ids: Array.from(cur) });
-                            }}
-                          />
-                          <span>{s.sku_name}</span>
-                          <span className="muted mono-id" style={{ marginLeft: 'auto' }}>{s.sku_number}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="full">
-                <label>USB Cable SKUs * <span className="muted" style={{ fontSize: 11 }}>· tick at least one</span></label>
-                {usbSkus.length === 0 ? (
-                  <div className="error-text">No USB Cable SKUs exist — create at least one first (Add SKU with type "USB cables").</div>
-                ) : (
-                  <div className="check-list">
-                    {usbSkus.map((s) => {
-                      const checked = (edit.usb_cable_sku_ids || []).includes(s.sku_id);
-                      return (
-                        <label key={s.sku_id} className={`check-item${checked ? ' checked' : ''}`}>
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={(e) => {
-                              const cur = new Set(edit.usb_cable_sku_ids || []);
-                              if (e.target.checked) cur.add(s.sku_id); else cur.delete(s.sku_id);
-                              setEdit({ ...edit, usb_cable_sku_ids: Array.from(cur) });
-                            }}
-                          />
-                          <span>{s.sku_name}</span>
-                          <span className="muted mono-id" style={{ marginLeft: 'auto' }}>{s.sku_number}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </>}
 
             {selectedType && (
               <div className={`full ${fieldClass('vendor_sku_ids')}`}>

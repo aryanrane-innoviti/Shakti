@@ -15,6 +15,7 @@ export default function VendorSkus() {
   // Surface the server's human-readable message, not the raw JSON envelope.
   const errMsg = (e, fallback) => e?.data?.error || e?.message || fallback;
   const [rows, setRows] = useState([]);
+  const [allRows, setAllRows] = useState([]);   // unfiltered — drives the component pickers
   const [vendors, setVendors] = useState([]);
   const [skuTypes, setSkuTypes] = useState([]);
   const [filter, setFilter] = useState({ vendor_id: '', sku_type_id: '' });
@@ -29,14 +30,31 @@ export default function VendorSkus() {
     const q = parts.join('&');
     api.get('/vendor-skus' + (q ? '?' + q : '')).then(setRows);
   };
+  const loadAllRows = () => api.get('/vendor-skus').then(setAllRows);
   useEffect(() => { load(); }, [filter, showDeleted]);
   useEffect(() => {
+    loadAllRows();
     api.get('/vendors').then(setVendors);
     api.get('/sku-types').then(setSkuTypes);
   }, []);
 
+  // Payment Terminal vendor SKUs reference adaptor / USB-cable vendor SKUs.
+  const ptType = skuTypes.find((t) => t.name === 'Payment Terminal');
+  const adaptorType = skuTypes.find((t) => t.name === 'Adaptors');
+  const usbType = skuTypes.find((t) => t.name === 'USB cables');
+  const adaptorOptions = allRows.filter((vs) => vs.sku_type_id === adaptorType?.sku_type_id && vs.status === 'Active');
+  const usbOptions = allRows.filter((vs) => vs.sku_type_id === usbType?.sku_type_id && vs.status === 'Active');
+  const editIsPT = !!(edit && ptType && Number(edit.sku_type_id) === ptType.sku_type_id);
+
   const save = async () => {
     try {
+      // Adaptor / USB-cable references are only sent for Payment Terminal SKUs.
+      const components = editIsPT
+        ? {
+            adaptor_vendor_sku_ids: edit.adaptor_vendor_sku_ids || [],
+            usb_cable_vendor_sku_ids: edit.usb_cable_vendor_sku_ids || [],
+          }
+        : {};
       if (editMode === 'add') {
         if (!edit.vendor_id) { toast.push('Pick a vendor', 'error'); return; }
         if (!edit.sku_type_id) { toast.push('Pick a SKU Type', 'error'); return; }
@@ -47,6 +65,7 @@ export default function VendorSkus() {
           vendor_sku_name: edit.vendor_sku_name,
           vendor_sku_price_moq: edit.vendor_sku_price_moq,
           vendor_sku_price_unit: edit.vendor_sku_price_unit,
+          ...components,
         });
         toast.push('Vendor SKU added', 'success');
       } else {
@@ -55,11 +74,13 @@ export default function VendorSkus() {
           vendor_sku_name: edit.vendor_sku_name,
           vendor_sku_price_moq: edit.vendor_sku_price_moq,
           vendor_sku_price_unit: edit.vendor_sku_price_unit,
+          ...components,
         });
         toast.push('Vendor SKU updated', 'success');
       }
       setEdit(null);
       load();
+      loadAllRows();
     } catch (e) { toast.push(errMsg(e, 'Failed to save vendor SKU'), 'error'); }
   };
 
@@ -124,7 +145,7 @@ export default function VendorSkus() {
           className="primary"
           onClick={() => {
             setEditMode('add');
-            setEdit({ vendor_id: '', sku_type_id: '', vendor_sku_number: '', vendor_sku_name: '', vendor_sku_price_moq: '', vendor_sku_price_unit: '' });
+            setEdit({ vendor_id: '', sku_type_id: '', vendor_sku_number: '', vendor_sku_name: '', vendor_sku_price_moq: '', vendor_sku_price_unit: '', adaptor_vendor_sku_ids: [], usb_cable_vendor_sku_ids: [] });
           }}
         >+ Add Vendor SKU</button>
       </div>
@@ -185,7 +206,19 @@ export default function VendorSkus() {
                 </td>
                 <td data-label="SKU Type">{r.sku_type_name || <span className="muted">—</span>}</td>
                 <td data-label="Vendor SKU Number"><code>{r.vendor_sku_number}</code></td>
-                <td data-label="Vendor SKU Name">{r.vendor_sku_name || '—'}</td>
+                <td data-label="Vendor SKU Name">
+                  {r.vendor_sku_name || '—'}
+                  {(r.adaptors?.length > 0 || r.usb_cables?.length > 0) && (
+                    <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                      {r.adaptors?.length > 0 && (
+                        <div>Adapters: {r.adaptors.map((a) => a.vendor_sku_number).join(', ')}</div>
+                      )}
+                      {r.usb_cables?.length > 0 && (
+                        <div>Cables: {r.usb_cables.map((u) => u.vendor_sku_number).join(', ')}</div>
+                      )}
+                    </div>
+                  )}
+                </td>
                 <td data-label="MOQ">{r.vendor_sku_price_moq ?? '—'}</td>
                 <td data-label="Unit price">{r.vendor_sku_price_unit ?? '—'}</td>
                 <td data-label="Status">
@@ -303,6 +336,66 @@ export default function VendorSkus() {
                 placeholder="≥ 0"
               />
             </div>
+
+            {editIsPT && (
+              <>
+                <div className="full">
+                  <label>Adaptor Vendor SKUs * <span className="muted" style={{ fontSize: 11 }}>· tick at least one</span></label>
+                  {adaptorOptions.length === 0 ? (
+                    <div className="error-text">No active Adaptor Vendor SKUs exist — add one first (Add Vendor SKU with SKU Type "Adaptors").</div>
+                  ) : (
+                    <div className="check-list">
+                      {adaptorOptions.map((vs) => {
+                        const checked = (edit.adaptor_vendor_sku_ids || []).includes(vs.vendor_sku_id);
+                        return (
+                          <label key={vs.vendor_sku_id} className={`check-item${checked ? ' checked' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const cur = new Set(edit.adaptor_vendor_sku_ids || []);
+                                if (e.target.checked) cur.add(vs.vendor_sku_id); else cur.delete(vs.vendor_sku_id);
+                                setEdit({ ...edit, adaptor_vendor_sku_ids: Array.from(cur) });
+                              }}
+                            />
+                            <span>{vs.vendor_sku_number}{vs.vendor_sku_name ? ` — ${vs.vendor_sku_name}` : ''}</span>
+                            <span className="muted mono-id" style={{ marginLeft: 'auto' }}>{vs.vendor_name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="full">
+                  <label>USB Cable Vendor SKUs * <span className="muted" style={{ fontSize: 11 }}>· tick at least one</span></label>
+                  {usbOptions.length === 0 ? (
+                    <div className="error-text">No active USB Cable Vendor SKUs exist — add one first (Add Vendor SKU with SKU Type "USB cables").</div>
+                  ) : (
+                    <div className="check-list">
+                      {usbOptions.map((vs) => {
+                        const checked = (edit.usb_cable_vendor_sku_ids || []).includes(vs.vendor_sku_id);
+                        return (
+                          <label key={vs.vendor_sku_id} className={`check-item${checked ? ' checked' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const cur = new Set(edit.usb_cable_vendor_sku_ids || []);
+                                if (e.target.checked) cur.add(vs.vendor_sku_id); else cur.delete(vs.vendor_sku_id);
+                                setEdit({ ...edit, usb_cable_vendor_sku_ids: Array.from(cur) });
+                              }}
+                            />
+                            <span>{vs.vendor_sku_number}{vs.vendor_sku_name ? ` — ${vs.vendor_sku_name}` : ''}</span>
+                            <span className="muted mono-id" style={{ marginLeft: 'auto' }}>{vs.vendor_name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
             <div className="full help-text">
               A vendor SKU number must be unique within its vendor, and the same number must
               always carry the same name across all vendors. After saving, link this vendor

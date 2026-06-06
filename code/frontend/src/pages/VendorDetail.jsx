@@ -68,16 +68,28 @@ export default function VendorDetail() {
         ) : (
           <div className="table-wrap">
           <table>
-            <thead><tr><th>Vendor SKU Number</th><th>Vendor SKU Name</th><th>Unit price</th><th>Status</th><th>Supplies Innoviti SKUs</th></tr></thead>
+            <thead><tr><th>Vendor SKU Number</th><th>Vendor SKU Name</th><th>Unit price</th><th>Status</th><th>Adapters / Cables</th><th>Supplies Innoviti SKUs</th></tr></thead>
             <tbody>
               {vendorSkus.map((vs) => {
                 const linked = Array.isArray(vs.linked_skus) ? vs.linked_skus : [];
+                const adaptors = Array.isArray(vs.adaptors) ? vs.adaptors : [];
+                const usbCables = Array.isArray(vs.usb_cables) ? vs.usb_cables : [];
                 return (
                   <tr key={vs.vendor_sku_id}>
                     <td><code>{vs.vendor_sku_number}</code></td>
                     <td>{vs.vendor_sku_name || '—'}</td>
                     <td>{vs.vendor_sku_price_unit ?? '—'}</td>
                     <td><span className={`badge ${vs.status === 'Active' ? 'active' : 'inactive'} sm`}>{vs.status}</span></td>
+                    <td>
+                      {adaptors.length === 0 && usbCables.length === 0 ? (
+                        <span className="muted">—</span>
+                      ) : (
+                        <div style={{ fontSize: 12 }}>
+                          {adaptors.length > 0 && <div>Adapters: {adaptors.map((a) => a.vendor_sku_number).join(', ')}</div>}
+                          {usbCables.length > 0 && <div>Cables: {usbCables.map((u) => u.vendor_sku_number).join(', ')}</div>}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       {linked.length === 0 ? (
                         <span className="muted">none</span>

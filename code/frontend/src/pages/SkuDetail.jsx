@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { useToast } from '../lib/toast.jsx';
 
@@ -65,46 +65,6 @@ export default function SkuDetail() {
           </button>
         </div>
       </div>
-
-      {(sku.adaptors?.length > 0 || sku.usb_cables?.length > 0) && (
-        <div className="card">
-          <h3>Payment Terminal components</h3>
-          <p className="help-text" style={{ marginTop: 0 }}>
-            Referenced Adaptor / USB SKUs. Items shown in <span style={{ color: '#c0392b' }}>red</span> are
-            Inactive — the reference is stale and should be replaced.
-          </p>
-          {sku.adaptors?.length > 0 && (
-            <>
-              <h4>Adaptors</h4>
-              <ul>
-                {sku.adaptors.map((a) => (
-                  <li key={a.sku_id} style={a.status === 'Inactive' ? { color: '#c0392b' } : null}>
-                    <Link to={`/skus/${a.sku_id}`} style={a.status === 'Inactive' ? { color: '#c0392b' } : null}>
-                      {a.sku_number} — {a.sku_name}
-                    </Link>
-                    {a.status === 'Inactive' && <span className="badge inactive" style={{ marginLeft: 6 }}>Inactive</span>}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {sku.usb_cables?.length > 0 && (
-            <>
-              <h4>USB cables</h4>
-              <ul>
-                {sku.usb_cables.map((u) => (
-                  <li key={u.sku_id} style={u.status === 'Inactive' ? { color: '#c0392b' } : null}>
-                    <Link to={`/skus/${u.sku_id}`} style={u.status === 'Inactive' ? { color: '#c0392b' } : null}>
-                      {u.sku_number} — {u.sku_name}
-                    </Link>
-                    {u.status === 'Inactive' && <span className="badge inactive" style={{ marginLeft: 6 }}>Inactive</span>}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </div>
-      )}
     </>
   );
 }
