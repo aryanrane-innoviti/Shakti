@@ -103,6 +103,21 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - **Admin**: full CRUD on every Section 1 object **except** User Types (which only SA can edit) and the SA's own record.
 - **Operational user types** (ASO, STU, ALU, RLU, FNU, LOU): **no access** to any Section 1 object in this phase. Their endpoints/screens land in later phases.
 
+### 1.12 Object creation hierarchy & association direction
+Shakti follows a strict **top-down creation order**, and every association is recorded on the **inferior (child) object** — the lower object in the hierarchy carries the foreign key and exposes the picker that attaches it to its parent. There is **no "assign from the parent" screen**; a parent's list of children is always a read-only derived projection on the parent's detail page.
+
+**Cold-start creation order** (each step depends on the ones above it):
+1. **Defaults (seeded at boot)** — the Super Admin user, the Innoviti vendor, and the **Bangalore HO** Inventory Location (owned by the Innoviti vendor). The seeded SA is tied to Bangalore HO (`users.location_id`).
+2. **Admin** — the first Admin user, created in Initial Setup, tied to **Bangalore HO** by default.
+3. **Vendors** — all SKU/other vendors, each with its registered + operational address (§6).
+4. **Inventory Locations** — created against a Vendor; the Location carries `vendor_id` (§9).
+5. **Users** — created against a Location; location-eligible user types carry `location_id`, set on the User form (§2 `location_eligible`, §3).
+6. **Vendor SKUs** — created against a Vendor; the Vendor SKU carries `vendor_id` (§8.3.a).
+7. **Innoviti SKUs** — created under Innoviti, optionally linked to one or more Vendor SKUs via `sku_vendor_links` (§8.1, §8.3.b).
+8. **Contacts** — created against a Vendor **and** (optionally) a Location; the Contact carries `vendor_id` + `location_id` (§4).
+
+**Association-direction rule (applies everywhere):** the picker that creates an association lives on the inferior object's Create/Modify form — the **User** form attaches a Location, the **Contact** form attaches a Vendor + Location, the **Location** form attaches a Vendor, the **Vendor SKU** form attaches a Vendor. Superior objects (Vendor, Location) render their children only as read-only lists on their detail pages.
+
 ---
 
 ## 2. User Types
@@ -113,24 +128,27 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `label` (string, 1–50 chars, displayed in pickers; editable per rules below).
 - `is_seed` (boolean) — true for the eight seeded types.
 - `is_immutable` (boolean) — true for `SA` and `ADMIN` only.
+- `location_eligible` (boolean) — when **true**, Users of this type attach an Inventory Location on the User Create / Modify form (the form renders a Location picker; see §3). When **false**, the User form shows no location picker and `location_id` stays NULL. Set at create-time; editable by SA via PATCH **for custom types only** (fixed for the eight seeded types). Turning it **off** hides the picker for future edits but does **not** clear `location_id` on existing users.
 - `created_at`, `updated_at`, `deleted_at` (timestamp; `deleted_at` always null — no user types are deletable).
 
 ### Seeded rows
-- `SA` (Super Admin) — immutable label, immutable existence.
-- `ADMIN` (Admin) — immutable label, immutable existence.
-- `ASO` (Area Service Officer), `STU` (Store User), `ALU` (Assembly Line User), `RLU` (Repair Line User), `FNU` (Finance User), `LOU` (Logistics User) — label **editable**, existence **locked**.
+- `SA` (Super Admin) — immutable label, immutable existence. `location_eligible = true` (the seeded SA is tied to Bangalore HO).
+- `ADMIN` (Admin) — immutable label, immutable existence. `location_eligible = true` (the first Admin is tied to Bangalore HO).
+- `ASO` (Area Service Officer), `STU` (Store User) — label **editable**, existence **locked**, `location_eligible = true` (ASO's audit location / STU's store location).
+- `ALU` (Assembly Line User), `RLU` (Repair Line User), `FNU` (Finance User), `LOU` (Logistics User) — label **editable**, existence **locked**, `location_eligible = false`.
 
 ### API endpoints
-- `POST   /user-types` — create new user type (SA only).
+- `POST   /user-types` — create new user type (SA only). Body accepts `label` and `location_eligible` (boolean, default `false`).
 - `GET    /user-types/{id}` — read one.
 - `GET    /user-types` — list.
-- `PATCH  /user-types/{id}` — update label (SA only; blocked when `is_immutable` is true).
+- `PATCH  /user-types/{id}` — update `label` and/or `location_eligible` (SA only; the **label** change is blocked when `is_immutable` is true, and `location_eligible` is fixed on all eight seeded types — see validation).
 - **No DELETE** endpoint. (No user type may be deleted.)
 
 ### Validation rules
 - `label` 1–50 characters, ASCII letters, digits, space, hyphen.
 - `code` immutable after creation.
 - `is_immutable` records reject any label change with HTTP 409.
+- `location_eligible`: boolean. Settable on `POST /user-types` (default `false`) and editable via `PATCH` for **custom** types only; on the eight **seeded** types it is fixed at its seeded value and any change attempt returns 409.
 
 ### Business rules / invariants
 - Only SA may create or edit User Types.
@@ -138,6 +156,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### UI surface
 - **Manage User Types** screen: SA can edit (inline rename for non-immutable rows, plus an "Add User Type" button); Admin can read the list but every Modify affordance is disabled with a tooltip indicating SA-only edit access. Operational user types do not see the screen.
+- The **Add User Type** form shows a **"Location associated?"** toggle that sets `location_eligible`; each row displays the flag as a read-only badge (editable by SA on custom rows; fixed on the eight seeded rows).
 
 ### Cross-object dependencies
 - All Types have to have some seed value before objects which refer to them are created.
@@ -145,6 +164,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 ### Acceptance
 - SA cannot delete any user type.
 - Admin role cannot reach `/user-types` write endpoints (HTTP 403).
+- Creating a custom user type with `location_eligible = true` causes the User form to render a Location picker when that type is selected; a type with `location_eligible = false` shows no picker.
 
 ---
 
@@ -164,7 +184,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `pincode` (string, 6 digits). Same ASO-exclusion as above.
 - `city` (string, derived from pincode at form-fill). Same ASO-exclusion as above.
 - `state` (string, derived from pincode at form-fill). Same ASO-exclusion as above.
-- `location_id` (FK → Inventory Locations, **optional**, **nullable**). The user's home Inventory Location. Used by the Phase 3 Audit modules — ASO uses it to know which location to audit; STU uses it to know which store they belong to. **Not consumed** by any Phase 1 or Phase 2 flow. **Assignment happens from the Locations tab (§9)**, not from the User form — the User form does **not** show a location picker. The Innoviti-vendor gate (for ASO **and** STU) and the Phase 3 in-flight-audit guard fire on whichever endpoint mutates this column (today: the Locations tab's `PUT /locations/{id}/aso-users` and `PUT /locations/{id}/stu-users` endpoints — see §9).
+- `location_id` (FK → Inventory Locations, **optional**, **nullable**). The user's home Inventory Location. Rendered on the User Create / Modify form **only when the selected user type is `location_eligible`** (§2); for non-eligible types the field is hidden and stays NULL. Consumed by the Phase 3 Audit modules — ASO uses it to know which location to audit; STU uses it to know which store they belong to — but it is now **set directly on the User form** (association lives on the inferior object, §1.12). The vendor-match rule (the Location's vendor must equal the user's vendor) and the Phase 3 in-flight-audit guard fire on the User write endpoints (`POST /users`, `PATCH /users/{id}`) that mutate this column. The seeded SA and the first Admin default to the **Bangalore HO** location (§9 seed).
 - `status` (enum: `Active`, `Inactive`; default `Active`).
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
@@ -185,7 +205,8 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `employee_id`: **required AND unique** when `vendor_id` resolves to the Innoviti vendor; **must not** be set when vendor != Innoviti (reject with 422).
 - `pincode`: **required** 6 digits; City/State derived via third-party lookup. If lookup fails, allow save but flag for review.
 - `user_type_id`: must reference an existing (non-deleted) User Type.
-- `location_id`: not settable via `POST /users` or `PATCH /users/{id}` — both endpoints **ignore** the field if it appears in the request body, even from SA / Admin. Assignment is performed exclusively from the Locations tab: `PUT /locations/{id}/aso-users` for ASO users and `PUT /locations/{id}/stu-users` for STU users (§9). Both Phase 1 endpoints enforce the Innoviti-vendor gate, and Phase 3 layers a single in-flight-audit guard hook on each.
+- `location_id`: **settable via `POST /users` and `PATCH /users/{id}`** when the user's type is `location_eligible`; for a non-eligible type any `location_id` in the body is ignored and the column stays NULL. When set, the referenced Location must exist and not be soft-deleted (else 422 `location_not_found`), and its `vendor_id` must equal the **user's** `vendor_id` (else 422 `user_vendor_mismatch`) — so the picker only offers the user's own vendor's Locations. There is **no** Innoviti-specific restriction; an ASO/STU defaults to the Innoviti vendor (`vendor_id` above), so its locations are Innoviti locations by virtue of the vendor-match rule, not a hardcoded gate.
+  - **Phase 3 in-flight-audit guard**: changing `location_id` on an ASO/STU who has a non-terminal audit session is rejected with 409 (`audit_location_in_use` / `store_location_in_use`) naming the offending AIN.
 - **Address fields** (`address_line_1`, `address_line_2`, `pincode`, `city`, `state`): not collected when `user_type_id` resolves to `ASO`. The API silently drops any address values in the request payload for an ASO; existing rows that already have address values are left untouched (no destructive cleanup). For every other user type the original validation applies — `pincode` required 6 digits, city/state derived via pincode lookup.
 - Cannot create another `SA` — system enforces a single SA seat (the seeded one).
 
@@ -201,13 +222,13 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - **Manage User dashboard**: total user count at top; list of users with `User Type`; inline actions **Modify**, **Delete**, **Copy Password Reset URL**; "Add User" button top-right.
 - **Add User / Modify User form**: all schema fields with the two ASO-specific suppressions below; pincode lookup; vendor picker (defaults to Innoviti for non-RLU/LOU and remains editable); conditional Employee ID field shown only when vendor is Innoviti.
   - **Address section hidden for ASO**: when the selected `user_type_id` is `ASO`, the form's address block (Address Line 1/2, Pincode, City, State) is not rendered. Toggling the user type at form-fill time hides or re-shows the section without resetting the other fields. For every other user type the address section appears unchanged.
-  - **No location picker on this form** for any user type. Location assignment for ASO users happens from the Locations tab — see §9. The Modify User form may surface a read-only "Assigned Audit Location" line for ASO users (showing the current `location_id` with a deep link to the Location detail page) but it is not editable here.
+  - **Location picker shown for location-eligible types**: when the selected user type's `location_eligible` is true (§2), the form renders a **Location** picker that writes `location_id`. The picker lists non-deleted Locations **of the user's selected vendor** (so an ASO/STU on the Innoviti vendor sees Innoviti locations). For non-eligible types no picker is shown. The seeded SA and the Initial-Setup Admin form default this picker to **Bangalore HO**.
 - **Confirm-via-popup** for Modify and Delete actions.
 
 ### Cross-object dependencies
 - User Types must exist (seeded).
 - Vendors must exist (Innoviti seed at minimum).
-- Inventory Locations (§9) are not a precondition for creating any user — the `location_id` column starts NULL and is populated later from the Locations tab.
+- Inventory Locations (§9) must exist before a `location_eligible` user can be tied to one. At cold start the **Bangalore HO** location is seeded (§9), so the Initial-Setup Admin can be tied to it immediately. For non-eligible user types, Locations are not a precondition (`location_id` stays NULL).
 
 ### Acceptance
 - SA's first login lands on Initial Setup and cannot navigate elsewhere until an Admin is created.
@@ -216,7 +237,8 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - Deleting a user sets Status=Inactive; the user appears in historical reports but is denied login.
 - Reactivating an Inactive user issues a fresh single-use 24h reset URL, surfaced via copy-to-clipboard. The prior password no longer works.
 - Creating an ASO user with no address fields in the payload succeeds — the address columns remain NULL and the form's address section was hidden in the UI.
-- `POST /users` and `PATCH /users/{id}` with `location_id` in the payload **ignore** the field — the column is unchanged. (ASO-location-assignment acceptance lives in §9 alongside the endpoint that actually mutates it.)
+- `POST /users` / `PATCH /users/{id}` with `location_id` set succeed for a `location_eligible` type and persist the column; the same payload against a non-eligible type leaves `location_id` NULL.
+- Assigning any location-eligible user to a Location whose vendor differs from the user's vendor returns 422 `user_vendor_mismatch` and writes nothing.
 
 ---
 
@@ -229,12 +251,13 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `email` (string, **required**; uniqueness is **not** enforced — two Contacts may share the same email).
 - `mobile` (string, **optional**; if provided, 10 digits, `^[6-9]\d{9}$`).
 - `vendor_id` (FK → Vendors, **required**).
+- `location_id` (FK → Inventory Locations, **optional**, **nullable**). The Location this Contact belongs to — the association lives on the Contact (the inferior object) per §1.12. When set, the Location's `vendor_id` must equal the Contact's `vendor_id`. A Contact may be vendor-wide (no Location) or tied to exactly one Location.
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 ### API endpoints
 - `POST   /contacts` — create (SA or Admin).
 - `GET    /contacts/{id}` — read one.
-- `GET    /contacts` — list, filterable by `vendor_id`, includes soft-deleted with `?include_deleted=true`.
+- `GET    /contacts` — list, filterable by `vendor_id` and `location_id`, includes soft-deleted with `?include_deleted=true`.
 - `PATCH  /contacts/{id}` — update.
 - `DELETE /contacts/{id}` — **soft delete**.
 
@@ -243,25 +266,30 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `email`: required; **no uniqueness constraint** (duplicates across contacts are allowed).
 - `mobile`: optional. **This is an explicit product override** of the original spec, which marked mobile as compulsory; the resolved decision is that mobile is non-compulsory for Contacts. If provided, must match `^[6-9]\d{9}$`.
 - `vendor_id`: required; rejected if vendor does not exist or is soft-deleted.
+- `location_id`: optional; if provided, the Location must exist, be non-deleted, and have `vendor_id` equal to the Contact's `vendor_id` (else 422 `contact_location_vendor_mismatch`). A `vendor_id` change that leaves the set Location mismatched is rejected until the Location is cleared or changed.
 
 ### Business rules / invariants
 - **Contact-requires-vendor invariant**: a Contact cannot be created or updated without a non-null `vendor_id` referencing an existing Vendor.
-- **Soft-deleted contacts remain visible** in any Inventory Location where they were Principal or Secondary contact. The Location form continues to display the deleted contact's name, suffixed with `(deleted)`.
+- **Contact-owns-Location**: the Contact ↔ Location association lives entirely on the Contact (`location_id`). The Location object no longer references Contacts (Principal/Secondary pickers are removed, §9). A Location's "Contacts at this location" list is a read-only derived projection of Contacts whose `location_id` matches.
+- **Soft-deleted contacts remain visible** on the Location detail page's derived "Contacts at this location" list, suffixed with `(deleted)`.
 - A soft-deleted Contact is excluded from Contact pickers when creating new associations.
 
 ### UI surface
-- **Manage Contacts** screen with filter by Vendor.
-- **Add / Modify Contact** form, with the explicit mobile-optional note in the field help text.
+- **Manage Contacts** screen with filters by Vendor and Location.
+- **Add / Modify Contact** form, with the explicit mobile-optional note in the field help text, plus an **optional Location picker** scoped to the chosen Vendor's non-deleted Locations (enabled only after a Vendor is selected; changing the Vendor clears a now-mismatched Location).
 - **Vendor detail page** has a "Contact Persons" hyperlink that lists all Contacts for the selected Vendor (see Vendors §6).
+- **Location detail page** shows a read-only "Contacts at this location" list (Contacts whose `location_id` matches), with `(deleted)` suffix for soft-deleted ones.
 
 ### Cross-object dependencies
-- Vendor must exist before a Contact can be created.
+- Vendor must exist before a Contact can be created. A Location is **optional**; if one is attached it must already exist and belong to the same Vendor.
 
 ### Acceptance
 - Creating a Contact without a vendor returns 422.
 - Two Contacts may share the same email address; the system does not reject duplicates.
 - A Contact saved without a mobile number is accepted.
-- After soft-deleting a Contact, opening a Location that referenced them still shows the name with `(deleted)`.
+- Creating a Contact with a `location_id` whose Location belongs to a different Vendor returns 422 `contact_location_vendor_mismatch`.
+- A Contact may be saved with no Location (vendor-wide); it then appears on no Location's derived contacts list.
+- After soft-deleting a Contact that had a `location_id`, the Location detail page's "Contacts at this location" list still shows the name with `(deleted)`.
 
 ---
 
@@ -404,7 +432,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 
 ### Business rules / invariants
 - **Nothing is hardcoded** about which SKU Type can have STM=Serial. The `serial_eligible` flag is the single source of truth. STM=Serial on an SKU is allowed **only if** the SKU's type has `serial_eligible = true` at the moment of SKU save/update.
-- Adaptor / USB SKU pickers on Payment Terminal SKUs rely on the existence of SKU Types literally named `Adaptors` and `USB cables`. If a Payment Terminal SKU is created with no candidate Adaptor/USB SKU rows present, the save is blocked (see SKU §8).
+- Adaptor / USB-cable pickers on **Payment Terminal Vendor SKUs** rely on the existence of SKU Types literally named `Adaptors` and `USB cables`. If a Payment Terminal Vendor SKU is created with no candidate Adaptor / USB-cable **Vendor SKU** rows present, the save is blocked (see Vendor SKU §8.3.a).
 
 ### UI surface
 - **Manage SKU Types** screen under Admin's "Modify Object Types" tab: list with inline rename and a **read-only** `serial_eligible` indicator. "Add SKU Type" button. The `serial_eligible` flag is set only on the Add form and cannot be toggled on existing rows. **No delete affordance is rendered** — SKU types are permanent.
@@ -432,9 +460,7 @@ Every Section 1 object writes a **minimal** change-log entry on create/update/de
 - `specifications_pdf` (file ref → object storage; **optional**; PDF, **≤10 MB**; **latest version only** — a new upload overwrites the previous file).
 - `approx_price_moq` (integer ≥1, **optional**) and `approx_price_unit` (decimal, ≥0, **optional**) — together represent Approximate price per unit (MOQ + unit price). Either may be null at create time.
 - `status` (enum: `Active`, `Inactive`; default `Active`).
-- **Conditional, only when `sku_type_id` resolves to "Payment Terminal":**
-  - `adaptor_sku_ids` (array of FK → SKU where type=Adaptors, **required, non-empty**, multi-select).
-  - `usb_cable_sku_ids` (array of FK → SKU where type=USB cables, **required, non-empty**, multi-select).
+- *(Adaptor / USB-cable references are **not** carried by the Innoviti SKU.* They live on the physical **Vendor SKU** of type "Payment Terminal" — see §8.3.a `adaptor_vendor_sku_ids` / `usb_cable_vendor_sku_ids`. The Innoviti SKU is a broad classification; each physical Vendor SKU describes its own adaptor + cable.)*
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 #### Relationships — Innoviti SKU ↔ Vendor SKU mapping
@@ -464,22 +490,19 @@ An Innoviti SKU may map to zero or more **Vendor SKUs** (§8.3.a) through the **
   - If `serial_eligible` is **false**, `stm` must be `None` — `Serial` is rejected with 422.
   - The UI locks the STM dropdown the moment a type is picked and auto-sets the correct value, so the field can never be wrong from the form.
 - `specifications_pdf`: MIME must be `application/pdf`; size ≤ **10 MB**.
-- Payment Terminal save **fails with 422** if either `adaptor_sku_ids` or `usb_cable_sku_ids` cannot be resolved to at least one candidate row (i.e., no Adaptor SKUs exist, or no USB cable SKUs exist). The error response instructs the user to create the prerequisite records first.
 - `vendor_sku_ids`: **optional** on both `POST /skus` (create) and `PATCH /skus/{id}` (modify). An Innoviti SKU is created first and may have **zero** Vendor SKUs at create time (the matching Vendor SKU may not exist yet); the link set can be revised later by re-submitting `vendor_sku_ids` on PATCH. If supplied, every referenced Vendor SKU must (a) exist, (b) be non-deleted, and (c) have the **same `sku_type_id`** as the Innoviti SKU — otherwise 422. On create, the first id supplied becomes the default supplier. On PATCH the existing default is preserved when still in the set; if removed, the first remaining link is auto-promoted. See §8.3.b for the link semantics.
 
 #### Business rules / invariants
 - **SKU Type is immutable.** To change type, create a new SKU.
 - **PDF storage**: object storage, **latest version only** (new uploads overwrite the previous file), **10 MB cap** per file.
-- Setting an Adaptor / USB SKU referenced by an Active Payment Terminal SKU to Inactive is **allowed**, but:
-  - The deactivation flow shows a warning listing the dependent Payment Terminal SKUs.
-  - The dependent Payment Terminal SKU's detail page **highlights the stale reference in red**.
+- Adaptor / USB-cable handling (including the "component went Inactive" warning) now lives on the **Vendor SKU** (§8.3.a), not on the Innoviti SKU.
 - Soft delete is reversible by toggling Status back to Active (subject to the standard role gating).
 
 #### UI surface
 - **Manage SKUs** screen with filters for Type, Status, Vendor.
-- **Add Innoviti SKU form** — Payment Terminal type **reveals** the Adaptor / USB multi-select widgets; other types hide them. A "Vendor SKUs (optional)" multi-select is shown for every SKU Type **only after the SKU Type has been picked**; the list is filtered to non-deleted Vendor SKUs whose `sku_type_id` matches the picked SKU Type, and switching the SKU Type clears any prior picks. If no Vendor SKUs of the picked SKU Type exist, the section displays a soft hint ("No vendor SKUs of this type yet — you can create them later on Manage Vendor SKU; the Innoviti SKU can still be saved without one") and the user proceeds with zero picks.
+- **Add Innoviti SKU form** — A "Vendor SKUs (optional)" multi-select is shown for every SKU Type **only after the SKU Type has been picked**; the list is filtered to non-deleted Vendor SKUs whose `sku_type_id` matches the picked SKU Type, and switching the SKU Type clears any prior picks. If no Vendor SKUs of the picked SKU Type exist, the section displays a soft hint ("No vendor SKUs of this type yet — you can create them later on Manage Vendor SKU; the Innoviti SKU can still be saved without one") and the user proceeds with zero picks.
 - **Modify Innoviti SKU form** — same fields editable as today, plus the same "Vendor SKUs (optional)" multi-select that appears on Create. It is pre-populated with the currently-linked Vendor SKUs (from `GET /skus/{id}.vendor_sku_ids`), and the user may tick/untick any to revise the link set. Submitting reconciles `sku_vendor_links` (additions inserted, removals soft-deleted) inside the PATCH transaction. SKU Type is immutable, so the multi-select stays filtered to the same SKU Type as at create.
-- **Innoviti SKU detail page** — header with SKU metadata. **No** stand-alone "Vendor SKUs" panel and **no** "+ Link Vendor SKU" affordance — link management lives on the Modify form (cross-ref Relationships above). Dependent-reference warnings (stale Adaptor/USB references on Payment Terminal SKUs) are highlighted in red.
+- **Innoviti SKU detail page** — header with SKU metadata. **No** stand-alone "Vendor SKUs" panel and **no** "+ Link Vendor SKU" affordance — link management lives on the Modify form (cross-ref Relationships above). Adaptor / USB-cable references (and their stale-reference warnings) are shown on the **Vendor SKU**, not here.
 
 
 #### Cross-object dependencies
@@ -489,10 +512,9 @@ An Innoviti SKU may map to zero or more **Vendor SKUs** (§8.3.a) through the **
 - Creating an Innoviti SKU with no `vendor_sku_ids` returns HTTP 201 (Vendor SKU is optional). The new SKU has zero rows in `sku_vendor_links`.
 - Creating an Innoviti SKU that references a Vendor SKU of a different SKU Type returns 422.
 - Creating an Innoviti SKU with valid same-type `vendor_sku_ids` returns 201, and the first id in the array is marked `is_default = true` in `sku_vendor_links`.
-- Creating a Payment Terminal SKU with no existing Adaptor SKU returns 422 with a clear "create Adaptor SKU first" message.
 - PATCH that attempts to change `sku_type_id` returns 422.
 - A 15 MB (or any >10 MB) PDF upload is rejected.
-- Setting an Adaptor SKU to Inactive shows a warning enumerating dependent Payment Terminal SKUs; on confirm, the dependent Payment Terminal SKU page renders the Adaptor reference in red.
+- *(Adaptor/USB-cable acceptance lives in §8.3.a — the Innoviti SKU no longer carries those fields.)*
 
 ### 8.2 Terminal Parent SKU — REMOVED
 
@@ -514,13 +536,17 @@ The legacy "SKU↔Vendor association" row (`sku_vendor_assoc`) is gone. A **Vend
 - `vendor_sku_price_unit` (decimal, ≥0, optional).
 - `vendor_sku_specification_pdf` (file ref → object storage; PDF, **≤10 MB**; **latest version only** — new uploads overwrite the previous file).
 - `status` (enum: `Active`, `Inactive`; default `Active`).
+- **Conditional, only when `sku_type_id` resolves to "Payment Terminal":**
+  - `adaptor_vendor_sku_ids` (JSONB array of FK → Vendor SKU whose type = `Adaptors`; **required, non-empty**, multi-select).
+  - `usb_cable_vendor_sku_ids` (JSONB array of FK → Vendor SKU whose type = `USB cables`; **required, non-empty**, multi-select).
+  - The referenced adaptor / cable Vendor SKUs may belong to **any** vendor (no same-vendor restriction); each must be live (non-deleted) and of the matching SKU Type. For every other SKU Type these two columns stay NULL.
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 #### API endpoints
-- `POST   /vendor-skus` — create (SA or Admin). Required body: `vendor_id`, `sku_type_id`, `vendor_sku_number`.
-- `GET    /vendor-skus/{id}` — read one (includes vendor name and SKU Type name). **Does not** expose a list of linked Innoviti SKUs (the link table is internal — see §8.3.b).
-- `GET    /vendor-skus` — list with filters `vendor_id`, `sku_type_id`, `status`, `include_deleted`.
-- `PATCH  /vendor-skus/{id}` — update vendor SKU number / name / MOQ / unit price. `vendor_id` and `sku_type_id` are **immutable** and rejected if changed.
+- `POST   /vendor-skus` — create (SA or Admin). Required body: `vendor_id`, `sku_type_id`, `vendor_sku_number` (plus `adaptor_vendor_sku_ids` + `usb_cable_vendor_sku_ids` when the type is Payment Terminal).
+- `GET    /vendor-skus/{id}` — read one (includes vendor name and SKU Type name, and resolves `adaptor_vendor_sku_ids` / `usb_cable_vendor_sku_ids` into `adaptors` / `usb_cables` arrays of `{ vendor_sku_id, vendor_sku_number, vendor_sku_name, status }`). **Does not** expose a list of linked Innoviti SKUs (the link table is internal — see §8.3.b).
+- `GET    /vendor-skus` — list with filters `vendor_id`, `sku_type_id`, `status`, `include_deleted`; each row resolves its adaptor / USB-cable components the same way as the read-one endpoint.
+- `PATCH  /vendor-skus/{id}` — update vendor SKU number / name / MOQ / unit price, plus `adaptor_vendor_sku_ids` / `usb_cable_vendor_sku_ids` when the (immutable) type is Payment Terminal. `vendor_id` and `sku_type_id` are **immutable** and rejected if changed.
 - `POST   /vendor-skus/{id}/status` — toggle Active/Inactive.
 - `DELETE /vendor-skus/{id}` — **soft delete**. Existing rows in `sku_vendor_links` that reference this Vendor SKU are also soft-deleted in the same transaction (cascading internal cleanup); no 409 guard is rendered because the link table is not user-visible.
 - `POST   /vendor-skus/{id}/restore` — restore a soft-deleted Vendor SKU (subject to the `(vendor_id, vendor_sku_number)` uniqueness check). Cascaded link soft-deletes are **not** auto-restored.
@@ -531,16 +557,18 @@ The legacy "SKU↔Vendor association" row (`sku_vendor_assoc`) is gone. A **Vend
 - `(vendor_id, vendor_sku_number)`: unique among non-deleted rows — enforced by a partial unique index.
 - `vendor_id`, `sku_type_id`: required at create; both must reference an existing, non-deleted row; both immutable on PATCH.
 - `vendor_sku_specification_pdf`: PDF MIME; ≤10 MB; new uploads overwrite the prior file.
+- **Payment Terminal components**: when `sku_type_id` resolves to "Payment Terminal", both `adaptor_vendor_sku_ids` and `usb_cable_vendor_sku_ids` are **required and non-empty**, and every id must resolve to a live Vendor SKU of type `Adaptors` / `USB cables` respectively (else 422). If **no** candidate Adaptor / USB-cable Vendor SKUs exist at all, the save is blocked with 422 telling the user to create the prerequisite Vendor SKU(s) first. For non-Payment-Terminal types the fields are ignored. On PATCH (type immutable) the references are revalidated only when the existing type is Payment Terminal.
 
 #### Business rules / invariants
 - A Vendor SKU is owned by exactly one Vendor and lives in exactly one SKU Type — both are immutable. To "move" a Vendor SKU to a different vendor or type, create a new Vendor SKU.
 - An Inactive Vendor SKU still appears in pickers, annotated; soft-deleted ones do not.
+- Setting an adaptor / USB-cable Vendor SKU that is referenced by an Active Payment Terminal Vendor SKU to Inactive is **allowed**; the referencing row surfaces each component's live `status` (via the resolved `adaptors` / `usb_cables` arrays) so the UI can flag a now-Inactive component.
 - The link table (`sku_vendor_links`) is internal and never surfaced on `GET /vendor-skus*`. The Manage Vendor SKU screen does **not** render a "Linked Innoviti SKUs" column.
 
 #### UI surface
-- **Manage Vendor SKU** screen. Each row is one Vendor SKU. Columns: Vendor, SKU Type, Vendor SKU Number, Vendor SKU Name, MOQ, Unit price, Status, Spec PDF (View / Upload / Replace), Actions (Modify / Activate-Deactivate / Delete; Restore for soft-deleted rows). Filters: Vendor, SKU Type, Show deleted. **No** "Linked Innoviti SKUs" column.
-- **Add Vendor SKU modal**: Vendor (required), SKU Type (required), Vendor SKU Number (required), Vendor SKU Name (optional), MOQ, Unit price.
-- **Modify Vendor SKU modal**: Vendor and SKU Type are shown disabled (immutable); only number, name and price fields are editable.
+- **Manage Vendor SKU** screen. Each row is one Vendor SKU. Columns: Vendor, SKU Type, Vendor SKU Number, Vendor SKU Name, MOQ, Unit price, **Adapters / Cables** (resolved component Vendor SKU numbers on Payment Terminal rows), Status, Spec PDF (View / Upload / Replace), Actions (Modify / Activate-Deactivate / Delete; Restore for soft-deleted rows). Filters: Vendor, SKU Type, Show deleted. **No** "Linked Innoviti SKUs" column.
+- **Add Vendor SKU modal**: Vendor (required), SKU Type (required), Vendor SKU Number (required), Vendor SKU Name (optional), MOQ, Unit price. When the chosen **SKU Type is "Payment Terminal"**, the modal reveals two **required** multi-selects — **Adaptor Vendor SKUs** (filtered to Vendor SKUs of type `Adaptors`) and **USB-cable Vendor SKUs** (type `USB cables`). Other SKU Types hide them.
+- **Modify Vendor SKU modal**: Vendor and SKU Type are shown disabled (immutable); number, name and price fields are editable, plus the adaptor / USB-cable multi-selects when the SKU Type is Payment Terminal.
 
 #### Cross-object dependencies
 - Vendors and SKU Types must exist.
@@ -551,6 +579,9 @@ The legacy "SKU↔Vendor association" row (`sku_vendor_assoc`) is gone. A **Vend
 - A PATCH that attempts to change `vendor_id` or `sku_type_id` returns 422.
 - DELETE on any Vendor SKU succeeds with a soft delete; any non-deleted `sku_vendor_links` rows referencing it are soft-deleted in the same transaction (no 409 surfaced).
 - `GET /vendor-skus/{id}` response carries vendor name and SKU Type name but no `linked_skus` array.
+- Creating a Payment Terminal Vendor SKU with no adaptor or USB-cable selection (or when none exist to pick) returns 422 with a "create the prerequisite Vendor SKU first" / "pick at least one" message.
+- Creating a Payment Terminal Vendor SKU referencing a Vendor SKU that is not of type `Adaptors` (resp. `USB cables`) returns 422.
+- `GET /vendor-skus` and `GET /vendor-skus/{id}` resolve `adaptor_vendor_sku_ids` / `usb_cable_vendor_sku_ids` into `adaptors` / `usb_cables` arrays of `{ vendor_sku_id, vendor_sku_number, vendor_sku_name, status }`.
 
 #### 8.3.b Innoviti SKU ↔ Vendor SKU link (`sku_vendor_links`)
 
@@ -615,81 +646,53 @@ There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, P
 - `pincode` (string, 6 digits).
 - `city` (derived from pincode).
 - `state` (derived from pincode).
-- `principal_contact_id` (FK → Contacts, **required**; Contact must have `vendor_id` equal to this Location's `vendor_id`).
-- `secondary_contact_id` (FK → Contacts, **optional**; if set, must differ from `principal_contact_id` and must belong to the same vendor).
+- *(No Principal/Secondary contact fields are used.* The Location ↔ Contact association now lives on the Contact (`contacts.location_id`, §4); a Location's contacts are a read-only derived list — see below. The legacy `principal_contact_id` / `secondary_contact_id` / `owner_type` columns physically remain in the schema but are unused by the application — they are deliberately **not** dropped because an earlier idempotent migration re-runs against them on every boot.)*
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 **Derived (not columns on `locations`)**:
-- `assigned_aso_user_ids` — the list of `users.user_id` values where `users.location_id = <this location_id> AND users.user_type_code = 'ASO' AND users.deleted_at IS NULL`. Surfaced in API responses (see GET below) and mutated atomically via `PUT /locations/{id}/aso-users` below.
-- `assigned_stu_user_ids` — same construction as above but with `user_type_code = 'STU'`. Mutated via `PUT /locations/{id}/stu-users` (the STU parallel endpoint described below).
-- Both projections come from the same single-FK column on the user row (`users.location_id`, §3); they differ only in the user-type filter applied. A user has at most one `location_id`, so a user appears in at most one Location's projection at any time.
+- `assigned_user_ids` — every `users.user_id` where `users.location_id = <this location_id> AND users.deleted_at IS NULL` (any location-eligible type). Surfaced read-only in API responses. **Set on the User form** (`POST`/`PATCH /users`, §3), not from any Location endpoint.
+- `assigned_aso_user_ids` / `assigned_stu_user_ids` — the same projection narrowed to `user_type_code = 'ASO'` / `'STU'`; surfaced for the Phase 3 audit modules. Read-only here.
+- `contact_ids` — every `contacts.contact_id` where `contacts.location_id = <this location_id>` (§4), surfaced read-only on the Location detail page (soft-deleted contacts shown with `(deleted)`).
+- All projections derive from a single-FK column on the child row (`users.location_id` / `contacts.location_id`); a given user/contact appears under at most one Location.
+
+**Seeded row.** A **Bangalore HO** Location owned by the Innoviti vendor is seeded at boot (cold-start default, §1.12). It carries Innoviti's head-office address; the seeded SA and the first Admin are tied to it via `users.location_id`. It cannot be soft-deleted while those default users still point at it.
 
 **No Status field.** Soft delete is the only retirement mechanism.
 
 ### API endpoints
 - `POST   /locations` — create (SA or Admin).
-- `GET    /locations/{id}` — read one. Response includes resolved Principal/Secondary contact display names (with `(deleted)` suffix when contact is soft-deleted), an `assigned_aso_users` array `[{ user_id, user_index, first_name, last_name, email }]`, and an `assigned_stu_users` array of the same shape.
+- `GET    /locations/{id}` — read one. Response includes an `assigned_users` array `[{ user_id, user_index, first_name, last_name, email, user_type_code }]` (plus the `assigned_aso_users` / `assigned_stu_users` narrowed subsets for Phase 3), and a `contacts` array `[{ contact_id, contact_index, first_name, last_name, email, deleted }]` derived from `contacts.location_id`. All are **read-only** — assignment happens on the child (User / Contact) forms.
 - `GET    /locations` — list, filterable by `vendor_id`.
-- `PATCH  /locations/{id}` — update; updates to `vendor_id` are **SA only**. Existing Principal/Secondary contacts are **kept as-is** across the vendor change (no clearing, no re-pick prompt). The cross-vendor contact reference is allowed and persists until SA explicitly edits the contact pickers. **Does not** accept the ASO-assignment field — use the dedicated endpoint below.
-- `PUT    /locations/{id}/aso-users` — **set the full list** of ASO users assigned to this Location. Body: `{ "user_ids": [<int>, ...] }`. SA or Admin only. Behaviour:
-  - For every `user_id` in the new list that is not already assigned here: set `users.location_id = <this location_id>` (additive).
-  - For every user **currently** assigned to this location whose `user_id` is **not** in the new list: set `users.location_id = NULL` (clear).
-  - Runs as a single transaction; partial failure rolls back the whole set.
-  - Each affected user is validated individually — see Validation rules. A 422 / 409 on any single user aborts the whole call with that user named in the error envelope.
-  - Writes one `change_log` row of `(User, <user_index>, actor, Update)` per affected user (same convention `PATCH /users/{id}` would have produced — preserves audit symmetry).
-- `PUT    /locations/{id}/stu-users` — exact parallel to `/aso-users` but scoped to STU users. Body, transaction semantics, and change-log emission are identical. Validation differs only in the user-type check: each `user_id` must resolve to `user_type_code = 'STU'`, otherwise 422 `store_location_user_not_stu`. The Innoviti-vendor gate and the Phase 3 in-flight-audit guard fire here in exactly the same way they fire on `/aso-users` (see `task/task3-stu.md` §5.1 for the STU-side guard hook).
-- `DELETE /locations/{id}` — **soft delete**. Soft-deleting a Location whose `assigned_aso_users` **or** `assigned_stu_users` is non-empty returns 409 `location_has_assigned_users` with both lists named — assignment must be cleared first via `PUT .../aso-users` and/or `PUT .../stu-users` with an empty list.
+- `PATCH  /locations/{id}` — update name / address; updates to `vendor_id` are **SA only**. The Location has **no contact or user assignment fields** — those associations live on the child objects (Contact `location_id`, User `location_id`). Changing a Location's `vendor_id` does not touch the Contacts/Users that point at it (their references persist; a Contact whose own vendor no longer matches is flagged "(other vendor)" on the Contact form, §4).
+- *(Removed: `PUT /locations/{id}/aso-users` and `PUT /locations/{id}/stu-users`.* ASO/STU location assignment now happens on the User Create/Modify form (§3); the per-user Innoviti-vendor gate and the Phase 3 in-flight-audit guard moved to `POST` / `PATCH /users`. Each such User write emits its own `(User, <user_index>, actor, Create|Update)` change-log row as usual.)*
+- `DELETE /locations/{id}` — **soft delete**. Blocked with 409 `location_has_assigned_users` if any non-deleted User still has `location_id` pointing here — re-point or clear those users first by editing them (§3). Contacts that reference the Location do **not** block the delete; they retain their `location_id` and render the Location with `(deleted)`.
 
 ### Validation rules
 - `location_name`: required; **no uniqueness constraint** — duplicates within or across vendors are allowed.
-- `principal_contact_id`: required; **at the moment of assignment** (create, or whenever the contact picker is edited), the chosen Contact must be non-deleted and have `vendor_id` equal to the Location's current `vendor_id`. After a subsequent vendor change on the Location, the existing principal reference is preserved even if it no longer matches the new vendor.
-- `secondary_contact_id`: if provided, same vendor rule **at the moment of assignment**, and must not equal `principal_contact_id`.
-- `vendor_id`: at create, any Vendor (Active or Inactive — see §6). On update, mutable **only by SA**; contact references are not cleared on the change.
-- **`PUT /locations/{id}/aso-users` validation** — applied per `user_id` in the supplied list:
-  - User must exist and not be soft-deleted → 422 `aso_user_not_found`.
-  - User's `user_type_code` must be `ASO` → 422 `audit_location_user_not_aso`.
-  - The location's `vendor_id` must match the seeded Innoviti vendor → 422 `audit_location_vendor_not_innoviti`. (Non-Innoviti locations cannot be assigned to ASOs at all — assignment rejects up-front rather than rejecting per-user.)
-  - Phase 3 only: if the user has any `audit_sessions` row with `status IN ('Incomplete','PendingReview')` AND `deleted_at IS NULL`, the assignment change for that user is rejected with 409 `audit_location_in_use` and the offending AIN. (Same guard described in `task/task3-aso.md` §5.1 — it now fires on this endpoint instead of the user-update endpoint.) Applies symmetrically to additions, removals, and "user reassigned from another location to this one."
-  - User IDs are de-duplicated server-side; a duplicated id in the request is silently collapsed.
-- **`PUT /locations/{id}/stu-users` validation** — same shape as the ASO block above with three substitutions:
-  - User-type check uses `STU`; the error code on a mismatch is 422 `store_location_user_not_stu` (analogue of `audit_location_user_not_aso`).
-  - Innoviti-vendor gate uses error code 422 `store_location_vendor_not_innoviti`.
-  - Phase 3 in-flight-audit guard checks `store_audit_sessions` (not `audit_sessions`) for non-terminal rows owned by the user; on a hit the response is 409 `store_location_in_use` with the offending Store-AIN. See `task/task3-stu.md` §5.1.
+- `vendor_id`: at create, any Vendor (Active or Inactive — see §6). On update, mutable **only by SA**; the change does not clear or rewrite the Contacts/Users that reference this Location.
+- A Location has **no contact or user fields** to validate — those associations are validated on the child objects: Contact ↔ Location in §4 (same-vendor rule), and User ↔ Location in §3 (location-eligible type, vendor-match rule, Phase 3 in-flight guard). The error codes `user_vendor_mismatch` and `audit_location_in_use` / `store_location_in_use` are now raised by the User write endpoints.
 
 ### Business rules / invariants
-- **Deleted contacts retained in display**: a Contact that was Principal or Secondary on this Location continues to render on the Location form even after Contact soft-delete, with the `(deleted)` suffix.
-- **Vendor change does not clear contacts**: when SA changes a Location's `vendor_id`, the existing `principal_contact_id` and `secondary_contact_id` references are preserved as-is, even if those contacts now belong to a different Vendor. The Location form continues to render those contacts; SA may edit the pickers later if desired.
+- **Deleted contacts retained in display**: a Contact tied to this Location (via `contacts.location_id`) continues to render on the Location detail page's "Contacts at this location" list even after Contact soft-delete, with the `(deleted)` suffix.
+- **Vendor change does not rewrite children**: when SA changes a Location's `vendor_id`, the Users and Contacts that reference this Location keep their references. A Contact whose own `vendor_id` no longer matches is flagged "(other vendor)" on the Contact form (§4).
 - Soft-deleted Locations remain referenced by historical inventory records (when those modules ship in later phases).
 
 ### UI surface
 - **Manage Locations** screen with Vendor filter.
-- **Add / Modify Location form**: vendor picker (disabled on edit for non-SA roles), location name, address with pincode lookup, Principal and Secondary contact pickers scoped to the chosen Vendor's Contacts list. When SA changes the vendor on an existing Location, the contact pickers display the previously selected (possibly cross-vendor) contacts; the dropdowns themselves still list only the new Vendor's contacts for fresh selection. A small "(other vendor)" annotation appears next to a contact name whose vendor no longer matches the Location's vendor.
-- If the chosen Vendor has zero non-deleted Contacts, the Principal-contact picker shows an inline message — "No contacts exist for this Vendor — add a contact first" — and the form blocks submission until a Contact is created.
-- **Assign Personnel panel** (Modify Location only, below the contact pickers): a labelled section titled `Assign this Location to…` with three stacked sub-pickers.
-  - **Contacts** — read-only summary of the Principal / Secondary contacts already set above. Contact-to-Location assignment continues to live in the Principal / Secondary pickers (no duplicate writeable picker here).
-  - **ASO Users** — a multi-select dropdown of active ASO users (search by name / `user_index` / email). The dropdown opens only when the Location's vendor is Innoviti; for any other vendor the picker is replaced with the inline message `ASO assignment is available only for Innoviti-vendor locations.` Below the picker, currently assigned ASOs render as removable chips. Adding or removing a chip triggers a single `PUT /locations/{id}/aso-users` call with the new full list; the per-user validation errors (`audit_location_user_not_aso`, `audit_location_in_use`, etc.) surface as toasts naming the offending user.
-  - **STU Users** — same shape as the ASO sub-picker but bound to `PUT /locations/{id}/stu-users`; same Innoviti-only gate, same chip / confirm-to-reassign UX. Errors use the STU-prefixed codes (`store_location_user_not_stu`, `store_location_in_use`).
-  - Each picker shows a confirmation modal when adding a user who is **already assigned to another location** — `Reassign <First Last> from <Other Location> to this Location?` — and on confirm performs the move in one call.
-- The Add Location form does **not** show the Assign Personnel panel — assignment is only possible after the Location row exists.
+- **Add / Modify Location form**: vendor picker (disabled on edit for non-SA roles), location name, address with pincode lookup. **No contact or user pickers** — Contacts and Users attach themselves to a Location from their own forms (§4, §3).
+- **Location detail page** shows two read-only derived panels: **"Contacts at this location"** (Contacts whose `location_id` matches, `(deleted)`-suffixed where soft-deleted) and **"Assigned users"** (Users whose `location_id` matches, with their user-type). Each entry deep-links to the child object's detail/modify page, which is where the association can be changed.
 
 ### Cross-object dependencies
 - Vendor must exist.
-- At least one Contact for that Vendor must exist before a Location can be saved (to satisfy mandatory Principal contact).
+- Contacts are **no longer** a precondition — a Location is created against its Vendor alone, then Users and Contacts attach to it afterward (§1.12 creation order: Locations precede Users and Contacts).
 
 ### Acceptance
-- Creating a Location without a Principal contact returns 422.
-- Setting Secondary = Principal returns 422.
+- Creating a Location requires only a Vendor + name + address — no contact is required (the old Principal-contact requirement is gone).
 - A non-SA user attempting to PATCH `vendor_id` on a Location is rejected (403).
 - Two Locations with the same name under the same Vendor (or across different Vendors) are both accepted — `location_name` has no uniqueness constraint.
-- After SA changes a Location's `vendor_id`, the prior Principal/Secondary contacts remain on the Location detail page even though they now belong to a different Vendor.
-- A soft-deleted Contact that was once Principal still appears on the Location detail with `(deleted)`.
-- `PUT /locations/{innoviti_loc_id}/aso-users` with two valid ASO `user_ids` sets both users' `users.location_id` to this location and returns the updated `assigned_aso_users` list. A follow-up `GET /users/{id}` on either ASO returns the new `location_id`.
-- `PUT /locations/{innoviti_loc_id}/aso-users` with one existing ASO removed from the list clears that user's `location_id` to NULL.
-- `PUT /locations/{non_innoviti_loc_id}/aso-users` with any non-empty list returns 422 `audit_location_vendor_not_innoviti` and writes nothing.
-- `PUT /locations/{id}/aso-users` including the id of a non-ASO user returns 422 `audit_location_user_not_aso` and writes nothing.
-- `PUT /locations/{id}/aso-users` including the id of an ASO who currently has an in-flight audit session (Phase 3 onwards) returns 409 `audit_location_in_use` naming the AIN and writes nothing.
-- All five acceptance criteria above hold for `PUT /locations/{id}/stu-users` with `STU` substituted for `ASO`, `store_location_*` substituted for `audit_location_*`, and `store_audit_sessions` substituted for `audit_sessions`.
-- Soft-deleting a Location whose `assigned_aso_users` **or** `assigned_stu_users` is non-empty returns 409 `location_has_assigned_users`; clearing the offending list(s) first via the appropriate `PUT .../{aso|stu}-users` with `{ user_ids: [] }` allows the delete to succeed.
+- The Location detail page's "Contacts at this location" list reflects exactly the Contacts whose `location_id` points here; a soft-deleted such Contact still appears with `(deleted)`.
+- The "Assigned users" list reflects exactly the Users whose `location_id` points here; assignment is changed from the User form (§3), not here.
+- Soft-deleting a Location that still has assigned Users returns 409 `location_has_assigned_users`; re-pointing those users elsewhere (or clearing their `location_id`) on the User form allows the delete to succeed. Referencing Contacts do not block the delete.
 
 ---
 

@@ -11,6 +11,7 @@ const EMPTY = {
   email: '', password: '',
   mobile: '', vendor_id: '', employee_id: '',
   address_line_1: '', address_line_2: '', pincode: '', city: '', state: '',
+  location_id: '',
 };
 
 export default function Users() {
@@ -20,6 +21,7 @@ export default function Users() {
   const [total, setTotal] = useState(0);
   const [types, setTypes] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [edit, setEdit] = useState(null);
   const [errors, setErrors] = useState({});
   const [confirmDel, setConfirmDel] = useState(null);
@@ -43,14 +45,21 @@ export default function Users() {
   useEffect(() => {
     api.get('/user-types').then(setTypes);
     api.get('/vendors').then(setVendors);
+    api.get('/locations').then(setLocations);
   }, []);
 
   const innoviti = vendors.find((v) => v.is_seed || v.company_name === 'Innoviti');
   const isInnovitiUser = edit ? Number(edit.vendor_id) === innoviti?.vendor_id : false;
   const editingExisting = !!(edit && edit.user_id);
   // ASO users carry no address (task1.md §3) — hide the whole Address section.
-  const selectedTypeCode =
-    types.find((t) => Number(t.user_type_id) === Number(edit?.user_type_id))?.code || edit?.user_type_code;
+  const selectedType = types.find((t) => Number(t.user_type_id) === Number(edit?.user_type_id));
+  const selectedTypeCode = selectedType?.code || edit?.user_type_code;
+  // Location picker shows only for location-eligible types, scoped to the
+  // user's own vendor (task1.md §3).
+  const locationEligible = !!selectedType?.location_eligible;
+  const vendorLocations = locations.filter(
+    (l) => Number(l.vendor_id) === Number(edit?.vendor_id) && !l.deleted_at
+  );
 
   const startNew = () => { setErrors({}); setEdit({ ...EMPTY, vendor_id: innoviti?.vendor_id ?? '' }); };
   const closeEdit = () => { setErrors({}); setEdit(null); };
@@ -60,6 +69,13 @@ export default function Users() {
     try {
       const payload = { ...edit };
       Object.keys(payload).forEach((k) => { if (payload[k] === '') delete payload[k]; });
+      // Location: send explicitly so clearing works (null), but only for
+      // location-eligible types (the API ignores it for other types).
+      if (locationEligible) {
+        payload.location_id = edit.location_id === '' || edit.location_id == null ? null : Number(edit.location_id);
+      } else {
+        delete payload.location_id;
+      }
       if (editingExisting) {
         await api.patch(`/users/${edit.user_id}`, payload);
         toast.push('User updated', 'success');
@@ -131,7 +147,9 @@ export default function Users() {
 
   const onVendorChange = (vid) => {
     const nextInnoviti = Number(vid) === innoviti?.vendor_id;
-    setEdit((p) => ({ ...p, vendor_id: vid, employee_id: nextInnoviti ? p.employee_id : '' }));
+    // Changing vendor invalidates a previously-picked location (it belonged to
+    // the old vendor) — clear it so the picker re-scopes to the new vendor.
+    setEdit((p) => ({ ...p, vendor_id: vid, employee_id: nextInnoviti ? p.employee_id : '', location_id: '' }));
   };
 
   return (
@@ -318,16 +336,31 @@ export default function Users() {
               </>
             )}
 
-            {editingExisting && !['SA', 'ADMIN'].includes(edit.user_type_code) && (
-              <div className="full" style={{ borderTop: '1px solid var(--border, #e5e7eb)', marginTop: 8, paddingTop: 12 }}>
-                <label>Assigned Location</label>
-                <p className="meta" style={{ margin: 0 }}>
-                  {edit.location_id
-                    ? (edit.location_name || `Location #${edit.location_id}`)
-                    : 'Not assigned.'}
-                </p>
-                <div className="help-text">Set from Manage Locations → Assigned Users; not editable here.</div>
-              </div>
+            {locationEligible && (
+              <>
+                <h3>Location</h3>
+                <div className={`full ${fieldClass('location_id')}`}>
+                  <label>Assigned Location</label>
+                  <select
+                    value={edit.location_id ?? ''}
+                    onChange={(e) => setEdit({ ...edit, location_id: e.target.value })}
+                    disabled={!edit.vendor_id}
+                  >
+                    <option value="">— None —</option>
+                    {vendorLocations.map((l) => (
+                      <option key={l.location_id} value={l.location_id}>
+                        {l.location_name} ({l.location_index})
+                      </option>
+                    ))}
+                  </select>
+                  <div className="help-text">
+                    {edit.vendor_id
+                      ? "Lists this user's vendor's locations. The vendor must match."
+                      : 'Pick a vendor first.'}
+                  </div>
+                  {fieldError('location_id') && <div className="error-text">{fieldError('location_id')}</div>}
+                </div>
+              </>
             )}
           </div>
         </Modal>

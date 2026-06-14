@@ -256,7 +256,7 @@ router.post('/', requireAuth, requireAso, async (req, res, next) => {
     }
 
     // The ASO's audit location is users.location_id (task1.md §3); assignment
-    // rides on PUT /locations/{id}/assigned-users. Snapshot it into the session.
+    // happens on the User form (POST/PATCH /users). Snapshot it into the session.
     const loc = await one(
       `SELECT l.location_id, l.location_name
          FROM users u

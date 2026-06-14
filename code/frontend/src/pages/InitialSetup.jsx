@@ -8,6 +8,7 @@ export default function InitialSetup() {
   const navigate = useNavigate();
   const [types, setTypes] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [form, setForm] = useState({
     first_name: '', last_name: '',
     email: '', password: '',
@@ -17,14 +18,19 @@ export default function InitialSetup() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all([api.get('/user-types'), api.get('/vendors')]).then(([t, v]) => {
+    Promise.all([api.get('/user-types'), api.get('/vendors'), api.get('/locations')]).then(([t, v, l]) => {
       setTypes(t);
       setVendors(v);
+      setLocations(l);
     });
   }, []);
 
   const adminType = types.find((t) => t.code === 'ADMIN');
   const innoviti  = vendors.find((v) => v.is_seed || v.company_name === 'Innoviti');
+  // The first Admin is tied to the seeded Bangalore HO location (task1.md §1.12).
+  const bangaloreHo = locations.find(
+    (l) => l.location_name === 'Bangalore HO' && Number(l.vendor_id) === Number(innoviti?.vendor_id)
+  );
 
   const submit = async (e) => {
     e.preventDefault();
@@ -35,6 +41,7 @@ export default function InitialSetup() {
         ...form,
         user_type_id: adminType?.user_type_id,
         vendor_id: innoviti?.vendor_id,
+        location_id: bangaloreHo?.location_id,
       });
       await refresh();
       navigate('/');

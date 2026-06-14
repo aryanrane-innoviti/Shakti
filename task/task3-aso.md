@@ -35,9 +35,9 @@ Out-of-scope items are listed in the footer. Ambiguities are marked inline with 
   - A new top-level **Audit** nav entry and audit screen that renders **only** for users whose `user_type_code = 'ASO'`.
 - Phase 3 may **read** every Phase 1/2 table (Users, Vendors, Locations, SKUs, Vendor SKUs, the three Master tables) and must not alter any of their schemas. The `users.location_id` column that this slice depends on is already part of the schema (migration 017; see `task1.md` §3) — Phase 3 simply consumes it.
 - The two "writes against Phase 1/2" exceptions:
-  - One additive in-flight-audit check inside the existing `PUT /locations/{id}/assigned-users` endpoint (the only Phase 1 endpoint that mutates `users.location_id` — `routes/locations.js`): a new query that rejects any assignment / unassignment / reassignment touching a non-admin user who has a non-terminal `audit_sessions` row. The check is **inline in the handler body** (`locations.js` lines 283–302); no separate hook registry exists (see §5.1).
+  - One additive in-flight-audit check inside the **User write endpoints** (`POST` / `PATCH /users`, `routes/users.js`) — which, under the reshaped object hierarchy (`task1.md` §1.12, §3), are now the only endpoints that mutate `users.location_id`: a new query that rejects a `location_id` change for an ASO who has a non-terminal `audit_sessions` row (see §5.1).
 
-    > NOTE: The registered route is `PUT /locations/{id}/assigned-users` (`routes/locations.js`). `auditSessions.js` and this document both use that name. If `task1.md` §9 still labels it `aso-users`, that label is the stale one — the live registration is `assigned-users`.
+    > NOTE: Under the reshaped hierarchy, `users.location_id` is set on the **User Create / Modify form** (`task1.md` §3), not from a Locations-side "assign users" endpoint. The earlier `PUT /locations/{id}/assigned-users` endpoint is removed, and the in-flight-audit guard moves with the column onto `POST` / `PATCH /users`. **Code alignment to this is pending** — the live code still carries the old Locations endpoint until the hierarchy change is implemented.
   - The three Master tables' `present_location_id`, `present_location_since`, and `last_audited_at` columns are **written** (not altered) when a PendingReview audit later becomes Completed (Store user approval). For this ASO slice, those writes happen in the Store-review task file; the ASO slice only stages the values inside the PAR.
 
 ### 1.2 ASO User type activation
@@ -48,9 +48,9 @@ Out-of-scope items are listed in the footer. Ambiguities are marked inline with 
 
 ### 1.3 ASO User Location (on the existing users table)
 - An ASO **cannot start an Audit Session** unless they have `users.location_id` populated. The audit start endpoint enforces this — there is no separate "Locked Audit Location" object, table, or join. The location lives directly on the user row, on the `users.location_id` column (migration 017; `task1.md` §3).
-- The per-user validation for location assignment (user exists & active, not an admin, and belongs to the **same vendor as the location**) is **already enforced by the Phase 1 `PUT /locations/{id}/assigned-users` endpoint** (`routes/locations.js`). Phase 3 does not duplicate those checks. (There is no Innoviti-specific or ASO-type-specific gate — the endpoint assigns any non-admin user whose vendor matches the location.)
-- The location of an ASO can be changed by an SA or Admin **only when there is no `Incomplete` or `PendingReview` audit session for that ASO**. This guard is the **one new piece of behavior** Phase 3 adds to the Phase 1 location-assignment endpoint — see §5.1. It cannot live in Phase 1 because the `audit_sessions` table doesn't exist until Phase 3.
-- No new endpoint is introduced for assigning the location — `PUT /locations/{id}/assigned-users` (`routes/locations.js`) is the sole writer of `users.location_id`. Phase 3 adds one inline in-flight-audit check to that handler.
+- The per-user validation for the location (the user's type is `location_eligible`, plus the location's vendor matching the user's vendor) is **enforced by the User write endpoints** (`POST` / `PATCH /users`) under the reshaped hierarchy — see `task1.md` §3 for the authoritative gate set. Phase 3 does not duplicate those checks. (There is no Innoviti-specific gate — an ASO defaults to the Innoviti vendor, so its locations are Innoviti by vendor-match.)
+- The location of an ASO can be changed by an SA or Admin **only when there is no `Incomplete` or `PendingReview` audit session for that ASO**. This guard is the **one new piece of behavior** Phase 3 adds — now layered onto the User write endpoints (§5.1). It cannot live in Phase 1 because the `audit_sessions` table doesn't exist until Phase 3.
+- No Locations-side assignment endpoint exists any more — `POST` / `PATCH /users` (`routes/users.js`) is the sole writer of `users.location_id`. Phase 3 adds one inline in-flight-audit check to those handlers.
 
 ### 1.4 Audit Session lifecycle
 There are exactly four lifecycle states, recorded in `audit_sessions.status` (CHECK enum in migration 014):
@@ -92,7 +92,7 @@ There are exactly four lifecycle states, recorded in `audit_sessions.status` (CH
   - Table-1/Table-2 Submit and Modify → `(AuditSession, <AIN>, actor, Update)`.
   - Complete → `(AuditSession, <AIN>, actor, Update)` (status transition).
   - Cancel → `(AuditSession, <AIN>, actor, SoftDelete)`.
-  - Changing a user's `users.location_id` is logged by the `PUT /locations/{id}/assigned-users` handler itself: it emits one `(User, <user_index>, actor, Update)` row per affected user inside its own transaction (no new object_type added). Phase 3's only addition to that handler is the in-flight-audit guard, not the change-log emission.
+  - Changing a user's `users.location_id` is logged by the User write handler itself: `POST` / `PATCH /users` emits the usual `(User, <user_index>, actor, Create / Update)` row inside its own transaction (no new object_type added). Phase 3's only addition to those handlers is the in-flight-audit guard, not the change-log emission.
 - All writes happen **inside the same transaction** as the originating mutation (Phase 1 §10 invariant). A failed change-log insert rolls back the audit mutation. The duplicate-scan and scan-target-error paths throw **before** any insert, so they write no row; a no-op PATCH returns **before** `logChange`, so it writes no row.
 - `change_log.object_type` is free-form `TEXT` (no enum / no CHECK), so the three new values (`AuditSession`, `AuditSerialRow`, `AuditAccessoryRow`) require **no** schema migration to be accepted.
 
@@ -118,7 +118,7 @@ There are exactly four lifecycle states, recorded in `audit_sessions.status` (CH
 - The list endpoint is gated by `requireAdminRead` and carries a defense-in-depth inline `user_type_code === 'ASO' → 403` (an ASO can never reach the list; they use `/current`).
 - **SA + Admin** cannot start, run, complete, or cancel a session on someone else's behalf. There is no "audit on behalf of user X" route in this slice.
 - **ASO** can mutate **only their own session**. The `(own only)` rows return 403 — not 404 — if the path refers to another user's session (`loadSessionForActor` returns `{status:403}` for a non-owner non-reader), so ASO does not even learn that another session exists.
-- Assigning / changing an ASO's `location_id` rides on the existing `PUT /locations/{id}/assigned-users` endpoint — that route already gates by SA / Admin (`requireAuth + requireAdmin`), no change to its authorization rules.
+- Assigning / changing an ASO's `location_id` rides on the User write endpoints (`POST` / `PATCH /users`) — those routes already gate by SA / Admin (`requireAuth + requireAdmin`), no change to their authorization rules.
 
 ### 1.9 Resolved product decisions
 - `ASO` user type is activated route-by-route — no global "ASO can read everything" door.
@@ -173,7 +173,7 @@ The Audit Session is the top-level Phase 3 object owned by an ASO user. One sess
 - A session cannot transition `Incomplete → PendingReview` unless both `table1_state` and `table2_state` are `Submitted`.
 - A session in any non-`Incomplete`, non-`Cancelled` status (i.e. `PendingReview`/`Completed`) rejects all mutations (scan, scan-targets is read-only and still allowed, row patch, submit, modify, complete) with HTTP 409 `audit_session_frozen`. Only the (future) Store-review path can move it on.
 - A session in `Cancelled` rejects all mutations with HTTP 410 `audit_session_cancelled`.
-- The ASO's `users.location_id` may be changed (via the location-assignment endpoint) **only when no `Incomplete` or `PendingReview` session exists** for that user — see §5.1.
+- The ASO's `users.location_id` may be changed (via `PATCH /users/{id}`) **only when no `Incomplete` or `PendingReview` session exists** for that user — see §5.1.
 
 ### Business rules / invariants
 - The PAR identity is the session row itself. There is no separate `pars` table — Table 1 and Table 2 row tables (§3, §4) are children of the session.
@@ -425,25 +425,25 @@ See §6.3 — the Table-2 panel.
 
 ## 5. Supporting objects
 
-### 5.1 In-flight-audit guard on the existing location-assignment endpoint
+### 5.1 In-flight-audit guard on the User write endpoints
 
-This is **not** a new object and not a schema change. The `users.location_id` column already exists (migration 017; `task1.md` §3), and the only writer of that column is the Phase 1 assignment endpoint (`PUT /locations/{id}/assigned-users`, `routes/locations.js`). What Phase 3 adds is a single **inline in-flight-audit check** in that handler's body (`locations.js` lines 283–302) — there is no hook registry, no boot-time registration, and no decoupling layer; the existing handler was edited directly to add the query.
+This is **not** a new object and not a schema change. The `users.location_id` column already exists (migration 017; `task1.md` §3); under the reshaped hierarchy (`task1.md` §1.12, §3) the only writers of that column are the **User Create / Modify endpoints** (`POST` / `PATCH /users`, `routes/users.js`). What Phase 3 adds is a single **inline in-flight-audit check** in those handlers — there is no hook registry and no decoupling layer; the handlers are edited directly to add the query.
+
+> NOTE: In the **currently shipped** code this guard lives inline in the old `PUT /locations/{id}/assigned-users` handler (`routes/locations.js`). The reshaped hierarchy moves it onto `POST` / `PATCH /users`; **code alignment is pending** and is tracked alongside the Phase 1 hierarchy implementation.
 
 #### Behavior
-- The check runs **after** the existing Phase 1 per-user validation — which is: user exists & is active (else 422 `user_not_found`), user is **not an admin** (else 422 `cannot_assign_admin`), and the user's vendor **matches the location's vendor** (else 422 `user_vendor_mismatch`). There is no Innoviti-specific gate and no ASO-type gate; any non-admin user of the location's vendor can be assigned.
-- The handler computes the **affected set**: every **non-admin** user whose `location_id` would change — removals (currently here, dropped from the new list) plus additions/reassignments (in the new list, not already pointing here).
-- For that affected set it runs **one** query against `audit_sessions` (`auditor_user_id = ANY(affected) AND status IN ('Incomplete','PendingReview') AND deleted_at IS NULL`) with `LIMIT 1`.
-- If any such user is found, the entire `PUT` short-circuits **before the transaction** with HTTP 409 `audit_location_in_use`, naming the **first** offending user + AIN in the error envelope; no users are reassigned.
-- If no offending user is found, the request proceeds into the transaction (set/clear `location_id`, write the per-user change-log rows).
+- The check runs **after** the User endpoint's own field validation (the user's type is `location_eligible`; the location's vendor matches the user's vendor — `task1.md` §3).
+- When the write would **change** a user's `location_id` (set, clear, or move it) for an ASO/STU, the handler runs **one** query against `audit_sessions` (`auditor_user_id = <this user> AND status IN ('Incomplete','PendingReview') AND deleted_at IS NULL`) with `LIMIT 1`.
+- If a non-terminal session is found, the write short-circuits **before the transaction** with HTTP 409 `audit_location_in_use`, naming the offending user + AIN in the error envelope; the `location_id` is **not** changed.
+- If none is found, the request proceeds (set/clear `location_id`, write the `(User, …, Create / Update)` change-log row).
 
 #### Change-log
-- The `assigned-users` handler emits one `(User, <user_index>, actor, Update)` change-log row **per affected user**, inside its own transaction (`locations.js` lines 312–318). Phase 3 adds no extra change-log row for the location field — but this emission is the handler's own, not something Phase 3 "rides on."
+- The User write handler emits its usual `(User, <user_index>, actor, Create / Update)` change-log row inside its own transaction. Phase 3 adds no extra change-log row for the location field — the guard only blocks; it does not log.
 
 #### Acceptance
-- Adding a user who has no non-terminal session: returns 200 (Phase 1 behavior preserved).
-- Same call adding (or removing, or reassigning) a user with an `Incomplete` **or** `PendingReview` session: returns 409 `audit_location_in_use`, with `{ user_id, user_index, audit_index }` in the error fields; **no** users in the call get reassigned (the check short-circuits before any write).
-- Same call where several listed users would be blocked: the call short-circuits on the **first** match (the guard query is `LIMIT 1`), so the envelope names one offending user at a time; the operator resolves them across repeated calls.
-- Same call where every listed user's only `audit_sessions` rows are `Cancelled` or `Completed`: returns 200 (only non-terminal statuses block).
+- Editing a user who has no non-terminal session: the `location_id` change succeeds (200/201).
+- A `PATCH /users/{id}` (or `POST /users`) that would set/clear/move `location_id` for an ASO with an `Incomplete` **or** `PendingReview` session: returns 409 `audit_location_in_use`, with `{ user_id, user_index, audit_index }` in the error fields; the `location_id` is unchanged.
+- A user whose only `audit_sessions` rows are `Cancelled` or `Completed`: the change succeeds (only non-terminal statuses block).
 - `POST /audit-sessions` for an ASO whose `users.location_id IS NULL`: returns 422 `audit_location_not_assigned`.
 
 ### 5.2 `accessory_stock_balances`
@@ -585,10 +585,10 @@ Empty state (`colSpan=6`): `No serial-type items at this location yet. Scan a se
     - Click → modal title `Cancel Audit Session`, message `Cancel this audit? The PAR will not be retained. This cannot be undone.`, confirm label `Cancel audit`, `danger`.
     - On confirm → `POST …/cancel`. On success, the toast confirms `Audit <AIN> cancelled.` and the screen re-fetches `/current` (re-rendering into the `none` Start view, §6.1 state 3).
 
-### 6.5 Manage Locations — Assign ASO Users panel
-- The **Assign Personnel → ASO Users** picker on the Manage Locations Modify form is already part of Phase 1 (`task1.md` §9 UI surface). Phase 3 makes **zero** UI changes to that form.
-- The only Phase 3-visible behavior change is the new 409 `audit_location_in_use` error response (the location-assignment endpoint surfaces the offending `{ user_id, user_index, audit_index }` in the error envelope; the existing `<error-banner>` component renders it naming the user and the AIN).
-- The Manage Users form has **no** location picker at all — the read-only "Assigned Audit Location" line on the Modify User form (Phase 1) deep-links to the Location detail page; from there the operator uses the Assign Personnel panel to make changes.
+### 6.5 Manage Users — Location picker
+- The **Location picker** on the Manage Users Create / Modify form (shown for `location_eligible` user types — for ASO/STU it is filtered to Innoviti-vendor locations) is part of the reshaped Phase 1 (`task1.md` §3 UI surface). Phase 3 makes **zero** UI changes to that form.
+- The only Phase 3-visible behavior change is the new 409 `audit_location_in_use` error response (the User write endpoint surfaces the offending `{ user_id, user_index, audit_index }` in the error envelope; the existing `<error-banner>` component renders it naming the user and the AIN).
+- The Manage Locations form no longer assigns users — its "Assigned users" panel is a read-only derived list (`task1.md` §9). All ASO location assignment happens on the User form.
 
 ### 6.6 Responsive & accessibility
 - Page conforms to Phase 1 §1.3 breakpoints. Below **768px** the tables collapse to the `.card-table` mobile pattern (`data-label="…"` per cell), already in `styles.css` (the `@media (max-width: 768px)` block; the page also has 640px and 480px breakpoints, but the table→card collapse and every audit-specific mobile rule below lives in the 768px block):
@@ -621,7 +621,7 @@ Empty state (`colSpan=6`): `No serial-type items at this location yet. Scan a se
 | Code                              | HTTP | Message template                                                                                                                |
 |-----------------------------------|------|---------------------------------------------------------------------------------------------------------------------------------|
 | `audit_location_not_assigned`     | 422  | `You do not have an audit location assigned. Ask an Admin to set your location on your user profile before starting an audit.` |
-| `audit_location_in_use`           | 409  | `Cannot change the user's location while they have an active or pending audit (<AIN>).` (Emitted by the Phase 3 inline in-flight-audit check in the `PUT /locations/{id}/assigned-users` handler — see §5.1. Fields `{user_id, user_index, audit_index}`.) |
+| `audit_location_in_use`           | 409  | `Cannot change the user's location while they have an active or pending audit (<AIN>).` (Emitted by the Phase 3 inline in-flight-audit check in the `POST` / `PATCH /users` handlers — see §5.1. Fields `{user_id, user_index, audit_index}`.) |
 | `audit_pending_review_block`      | 409  | `Previous audit <AIN> is awaiting Store review. Cannot start a new audit by the same user until the previous audit review is closed.` (fields `{audit_index}`) |
 | `duplicate_scan`                  | 409  | `<S.No.> has already been audited in this session.` (fields `{serial_number}`)                                                  |
 | `audit_session_frozen`            | 409  | `This audit is awaiting Store review and cannot be modified.`                                                                   |
@@ -656,7 +656,7 @@ Per Phase 1 §10's minimal model, Phase 3 ASO writes exactly one `change_log` ro
 
 | Trigger                                              | object_type           | object_id          | action       |
 |------------------------------------------------------|-----------------------|--------------------|--------------|
-| `PUT /locations/{id}/assigned-users` that sets/changes `location_id` | `User`           | `<user_index>`     | `Update` (one row **per affected user**, emitted by that handler itself — no new object_type) |
+| `POST` / `PATCH /users` that sets/changes `location_id` | `User`           | `<user_index>`     | `Create / Update` (emitted by the User write handler itself — no new object_type) |
 | `POST /audit-sessions` (create)                      | `AuditSession`        | `<AIN>`            | `Create`     |
 | `POST …/table1/scan` — expected hit                  | `AuditSerialRow`      | `<row_id>`         | `Update`     |
 | `POST …/table1/scan` — unexpected / unregistered     | `AuditSerialRow`      | `<row_id>`         | `Create`     |
@@ -668,7 +668,7 @@ Per Phase 1 §10's minimal model, Phase 3 ASO writes exactly one `change_log` ro
 | `POST /audit-sessions/{id}/cancel`                   | `AuditSession`        | `<AIN>`            | `SoftDelete` |
 
 - No per-field diff (consistent with Phase 1 §10).
-- The `change_log.object_type` column is free-form `TEXT`, so the three new values (`AuditSession`, `AuditSerialRow`, `AuditAccessoryRow`) need no migration. `UserAuditLocation` is **not** introduced — location changes are logged as `User` rows by the `assigned-users` handler itself.
+- The `change_log.object_type` column is free-form `TEXT`, so the three new values (`AuditSession`, `AuditSerialRow`, `AuditAccessoryRow`) need no migration. `UserAuditLocation` is **not** introduced — location changes are logged as `User` rows by the `POST` / `PATCH /users` handler itself.
 - A PATCH (Table-1 row or Table-2 counter) that submits the same value as currently stored (idempotent no-op) does **not** write a change-log row, matching Phase 1 §10's invariant. The duplicate-scan and scan-target-error paths throw before any insert, so they too write no row. The suspension sweep writes no row.
 
 ---
@@ -701,6 +701,6 @@ Per Phase 1 §10's minimal model, Phase 3 ASO writes exactly one `change_log` ro
 - **Multi-location audit in one session** — each session is locked to one location (the value of `users.location_id` snapshotted at session start). Cross-location reconciliation is a future-phase concern.
 - **Offline / queued scans when the network drops mid-session** — every scan is an online POST + session GET. Offline mode is not in scope.
 - **A full Accessory Master object** — `accessory_stock_balances` is the minimum-viable quantity tracker introduced specifically for this audit slice. A first-class Accessory Master (with its own load journey, status, dispatch lifecycle) is a future-phase concern.
-- **Parallel `user_audit_locations` join table** — explicitly removed (migration 018). The ASO's location lives on the `users.location_id` column (migration 017; `task1.md` §3); assignment rides on the Phase 1 `PUT /locations/{id}/assigned-users` endpoint (`routes/locations.js`).
+- **Parallel `user_audit_locations` join table** — explicitly removed (migration 018). The ASO's location lives on the `users.location_id` column (migration 017; `task1.md` §3); assignment happens on the User Create / Modify form (`POST` / `PATCH /users`).
 - **Any DDL against the `users` table in Phase 3** — `users.location_id` is delivered by migration 017. Phase 3 makes no schema change to `users`.
 - **Surfacing Vendor SKU Number or Remarks in the ASO Audit view** — both are stored in the schema but intentionally hidden from the ASO screen (§6.2, §6.3); they remain available to API clients and the Store-review slice.

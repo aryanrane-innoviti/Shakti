@@ -13,7 +13,7 @@ It deliberately **excludes**:
 **Hard constraints inherited from prior phases and the ASO slice:**
 - Phase 3 STU must be built **without changing any Phase 1, Phase 2, or Phase 3 ASO requirement, table, route, or screen**. The STU slice is **additive**: new tables, new endpoints, new screens, a new nav entry that only STU users see.
 - The only Phase 1 / Phase 2 / Phase 3-ASO surface area this slice touches **at all** is:
-  - The `change_log.object_type` column, **appended** to (never reordered or removed) with three new values (`StoreAuditSession`, `StoreAuditSerialRow`, `StoreAuditAccessoryRow`). The column has been free-form `TEXT` since 014, so no DDL change is required for the enum — only string conventions. (`UserStoreLocation` from earlier drafts is not introduced; location changes ride on the existing `User` row that `PUT /locations/{id}/stu-users` already emits — see §1.7.)
+  - The `change_log.object_type` column, **appended** to (never reordered or removed) with three new values (`StoreAuditSession`, `StoreAuditSerialRow`, `StoreAuditAccessoryRow`). The column has been free-form `TEXT` since 014, so no DDL change is required for the enum — only string conventions. (`UserStoreLocation` from earlier drafts is not introduced; location changes ride on the existing `User` row that `POST` / `PATCH /users` already emits — see §1.7.)
   - The three Master tables' `present_location_id`, `present_location_since`, `last_audited_at` columns — these were created NULL-at-load **specifically so the Audit flow could populate them**. STU writes values into existing columns at the **Admin-review approve** step; **the STU slice in this file only stages those values inside the PAR**. The actual write-back to the masters lands in the Admin-review task file.
   - `accessory_stock_balances` (created by the ASO slice in migration 014) is **read** at seed time by STU's Table 2. Writes happen at Admin approve, again in a separate task file.
 - **API-first**: every audit operation — starting a session, picking an area tab, submitting scans, updating counters, submitting/modifying a table, completing/cancelling, resuming — is a REST endpoint. The UI in §7 is a thin client over those endpoints.
@@ -31,7 +31,7 @@ Out-of-scope items are listed in the footer. Ambiguities are marked inline with 
 ### 1.1 Additive-only rule (re-statement for STU)
 - No Phase 1, Phase 2, or Phase 3-ASO source file is edited as part of this slice. New things introduced:
   - New tables (`store_audit_sessions`, `store_audit_serial_rows`, `store_audit_accessory_rows`).
-  - New routes under `/store-audit-sessions/...`. **No new endpoint** is introduced for assigning a STU's store location — assignment rides on the Phase 1 `PUT /locations/{id}/stu-users` endpoint (`task1.md` §9), with one Phase 3-additive guard hook (see §5.1).
+  - New routes under `/store-audit-sessions/...`. **No new endpoint** is introduced for assigning a STU's store location — assignment rides on the User Create / Modify endpoints (`POST` / `PATCH /users`, `task1.md` §3), with one Phase 3-additive guard hook (see §5.1).
   - **Zero DDL changes** to any existing table. The `users.location_id` column the STU slice depends on is already part of the Phase 1 schema (`task1.md` §3) — the STU slice simply consumes it. Earlier drafts proposed a parallel `user_store_locations` join table; that is now explicitly **dropped** in favor of reusing the same `users.location_id` that the ASO slice consumes (one column per user; the user's `user_type_code` discriminates which Audit module reads it).
   - A new top-level **Store Audit** nav entry and screen that renders **only** for users whose `user_type_code = 'STU'`.
   - A new `requireStu()` middleware in `code/backend/src/lib/auth.js`, added **next to** the existing `requireAso` helper without modifying any existing export.
@@ -50,11 +50,11 @@ Out-of-scope items are listed in the footer. Ambiguities are marked inline with 
 ### 1.3 STU Store Location (on the existing users table)
 - An STU **cannot start a Store-Audit Session** unless `users.location_id` is populated for that user. The session-start endpoint enforces this — there is no separate "Locked Store Location" object, table, or join.
 - The location lives directly on the user row, on the `users.location_id` column already in the Phase 1 schema (`task1.md` §3). It is the same column the ASO slice consumes; the discriminator is `users.user_type_code` — an ASO user's `location_id` is read by `/audit-sessions/*`, an STU user's `location_id` is read by `/store-audit-sessions/*`. A given user is one type or the other, never both, so the column has exactly one semantic owner per row.
-- The Innoviti-vendor gate for an STU's `location_id` and the per-user `store_location_user_not_stu` check are **already enforced** by the Phase 1 `PUT /locations/{id}/stu-users` endpoint (`task1.md` §9 validation rules). Phase 3 does not duplicate those checks.
-- The location of an STU can be changed by an SA or Admin **only when there is no `Incomplete` or `PendingReview` Store-Audit session for that STU**. This guard is the **one new piece of behavior** Phase 3 adds to the Phase 1 `/stu-users` endpoint — see §5.1. It cannot live in Phase 1 because the `store_audit_sessions` table doesn't exist until Phase 3.
-- No new endpoint is introduced for assigning the location — `PUT /locations/{id}/stu-users` (Phase 1, `task1.md` §9) is the sole writer of `users.location_id` for STU users. Phase 3 attaches one additive guard hook.
+- The location validation for an STU (the `location_eligible` type check plus the location-vendor-matches-user-vendor rule) is **enforced** by the User write endpoints (`POST` / `PATCH /users`, `task1.md` §3 validation rules). Phase 3 does not duplicate those checks. (An STU defaults to the Innoviti vendor, so its store location is an Innoviti location by vendor-match — no hardcoded Innoviti gate.)
+- The location of an STU can be changed by an SA or Admin **only when there is no `Incomplete` or `PendingReview` Store-Audit session for that STU**. This guard is the **one new piece of behavior** Phase 3 adds to the User write endpoints — see §5.1. It cannot live in Phase 1 because the `store_audit_sessions` table doesn't exist until Phase 3.
+- No Locations-side assignment endpoint exists any more — `POST` / `PATCH /users` (`task1.md` §3) is the sole writer of `users.location_id` for STU users. Phase 3 attaches one additive guard hook.
 
-> NOTE: The source spec is silent on **where** the Store User's location comes from. The wording "the store user has 4 storage areas within his location" implies a pre-bound single location, but does not say which schema field carries it. The chosen mechanism (Phase 1 `users.location_id` populated via the Locations tab) mirrors exactly the ASO mechanism so the two slices stay symmetric and product / operators only have to learn one assignment workflow. Override only if STU's location must logically live on a separate field from ASO's — there is no architectural reason for that today.
+> NOTE: The source spec is silent on **where** the Store User's location comes from. The wording "the store user has 4 storage areas within his location" implies a pre-bound single location, but does not say which schema field carries it. The chosen mechanism (Phase 1 `users.location_id` populated on the User Create / Modify form, `task1.md` §3) mirrors exactly the ASO mechanism so the two slices stay symmetric and product / operators only have to learn one assignment workflow. Override only if STU's location must logically live on a separate field from ASO's — there is no architectural reason for that today.
 
 ### 1.4 Store-Audit Session lifecycle
 There are exactly four lifecycle states, recorded in `store_audit_sessions.status`:
@@ -94,7 +94,7 @@ There are exactly four lifecycle states, recorded in `store_audit_sessions.statu
   - Per-area Table-1/Table-2 Submit and Modify (toggles between editable and frozen) → `(StoreAuditSession, AIN, actor, Update)`.
   - Complete → `(StoreAuditSession, AIN, actor, Update)` (status transition).
   - Cancel → `(StoreAuditSession, AIN, actor, SoftDelete)`.
-  - Mutations of `users.location_id` ride on the existing per-user `User` change-log row that `PUT /locations/{id}/stu-users` (Phase 1, `task1.md` §9) already emits. No new `object_type` value, no extra row from this slice.
+  - Mutations of `users.location_id` ride on the existing per-user `User` change-log row that `POST` / `PATCH /users` (Phase 1, `task1.md` §3) already emits. No new `object_type` value, no extra row from this slice.
 - All writes happen **inside the same transaction** as the originating mutation (Phase 1 §10 invariant). A failed change-log insert rolls back the audit mutation.
 - `change_log.object_type` gains three new string values used by this slice: `StoreAuditSession`, `StoreAuditSerialRow`, `StoreAuditAccessoryRow`. Column is `TEXT`; no migration required, only a code convention. (`UserStoreLocation` from earlier drafts is dropped — the location change rides on the existing `User` row.)
 
@@ -121,7 +121,7 @@ The Store User's session is divided into **five fixed storage areas**, each rend
 
 | Endpoint                                                                  | SA      | Admin   | STU                    | ASO   | Other operational |
 |---------------------------------------------------------------------------|---------|---------|------------------------|-------|-------------------|
-| `PUT /locations/{id}/stu-users` (Phase 1, `task1.md` §9 — listed for completeness; STU is touched as a row whose `location_id` is being mutated, not as the caller) | **200** | **200** | n/a | n/a | n/a |
+| `POST` / `PATCH /users` (Phase 1, `task1.md` §3 — listed for completeness; the STU is the row whose `location_id` is being mutated) | **200** | **200** | n/a | n/a | n/a |
 | `POST /store-audit-sessions`                                              | 403     | 403     | **201/200**            | 403   | 403               |
 | `GET /store-audit-sessions/current`                                       | 403     | 403     | **200**                | 403   | 403               |
 | `GET /store-audit-sessions/{id}`                                          | **200** | **200** | **200** (own only)     | 403   | 403               |
@@ -159,7 +159,7 @@ The Store-Audit Session is the top-level Phase 3 STU object owned by an STU user
 - `audit_index` (string, format `AIN-NNNNN` starting at `AIN-50001`, monotonic, immutable). Generated via `lib/ids.js::nextIndex('store_audit')`.
 - `auditor_user_id` (FK → `users`, **required**, **immutable** after creation). Must be an STU user.
 - `auditor_user_index` (string, denormalized snapshot of `users.user_index` at session start — preserved across actor renames / soft deletes; matches the change-log denormalization pattern).
-- `location_id` (FK → `locations`, **required**, **immutable** after creation). Resolved from `users.location_id` (Phase 1, `task1.md` §3) at session start; **snapshotted** so a later location reassignment via `PUT /locations/{id}/stu-users` does not retroactively change historical PARs.
+- `location_id` (FK → `locations`, **required**, **immutable** after creation). Resolved from `users.location_id` (Phase 1, `task1.md` §3) at session start; **snapshotted** so a later location reassignment via `PATCH /users/{id}` does not retroactively change historical PARs.
 - `location_snapshot_name` (string, snapshot of `locations.location_name` at session start).
 - `status` (enum, **required**, default `Incomplete`): one of `Incomplete`, `PendingReview`, `Cancelled`, `Completed`. This file writes only the first three; `Completed` is reserved for the Admin-review task file.
 - **Per-area state columns** — five `*_table1_state` and five `*_table2_state` columns, each enum `Editing`|`Submitted`, default `Editing`. The naming follows the `area_code` from §1.8:
@@ -214,7 +214,7 @@ See §7 for the full screen. The session header shows:
 - Below the Complete/Cancel row, the five area tabs (Working | Retrieved Not Inspected | Under Repair | Scrapped | Repaired Not Inspected).
 
 ### Cross-object dependencies
-- `users.location_id` must be populated for the auditor (assigned via `PUT /locations/{id}/stu-users` — Phase 1 §9).
+- `users.location_id` must be populated for the auditor (assigned via `POST` / `PATCH /users` — Phase 1 §3).
 - `locations` row must exist (Phase 1 §9) and belong to the Innoviti vendor.
 
 ### Acceptance
@@ -416,29 +416,30 @@ See §7.4 — the per-area Table-2 panel.
 
 ## 5. Supporting objects
 
-### 5.1 In-flight-audit guard on the existing Phase 1 location-assignment endpoint
+### 5.1 In-flight-audit guard on the User write endpoints
 
-This is **not** a new object and not a schema change. The `users.location_id` column already exists in the Phase 1 schema (`task1.md` §3), and the only writer of that column for STU users is `PUT /locations/{id}/stu-users` (Phase 1, `task1.md` §9). What the Phase 3 STU slice adds is a single **additive guard hook** registered on that endpoint, which fires only when the Store-Audit feature is active.
+This is **not** a new object and not a schema change. The `users.location_id` column already exists in the Phase 1 schema (`task1.md` §3); under the reshaped hierarchy (`task1.md` §1.12, §3) the only writers of that column for STU users are the **User Create / Modify endpoints** (`POST` / `PATCH /users`). What the Phase 3 STU slice adds is a single **additive guard hook** registered on those endpoints, which fires only when the Store-Audit feature is active.
+
+> NOTE: In the **currently shipped** code this hook is wired onto the old `PUT /locations/{id}/stu-users` handler. The reshaped hierarchy moves it onto `POST` / `PATCH /users`; **code alignment is pending** and is tracked alongside the Phase 1 hierarchy implementation.
 
 #### Behavior
-- The hook runs **after** the existing Phase 1 per-user validation (Innoviti-vendor gate, `store_location_user_not_stu` user-type check, user-exists) and **before** the per-user write inside the transaction.
-- For every `user_id` whose effective `location_id` would change (additions, removals, and reassignments from another location), the hook looks up any `store_audit_sessions` row where `auditor_user_id = user_id AND status IN ('Incomplete','PendingReview') AND deleted_at IS NULL`.
-- If any such user is found, the entire `PUT` short-circuits with HTTP 409 `store_location_in_use`, names the offending user(s) + Store-AIN(s) in the error envelope, and rolls back the whole transaction — no users are partially reassigned.
-- If no offending user is found, the request proceeds to the existing Phase 1 update logic untouched.
+- The hook runs **after** the User endpoint's own field validation (the `location_eligible` type check and the location-vendor-matches-user-vendor rule — `task1.md` §3) and **before** the `location_id` write inside the transaction.
+- When the write would **change** an STU's `location_id` (set, clear, or move it), the hook looks up any `store_audit_sessions` row where `auditor_user_id = <this user> AND status IN ('Incomplete','PendingReview') AND deleted_at IS NULL`.
+- If a non-terminal session is found, the write short-circuits with HTTP 409 `store_location_in_use`, names the offending user + Store-AIN in the error envelope, and the `location_id` is **not** changed.
+- If none is found, the request proceeds to the User update logic untouched.
 
-#### Why a hook rather than editing the endpoint
-- The Phase 1 location-assignment route was written without any awareness of Store-Audit sessions. Editing it would couple Phase 1 to Phase 3 tables. A guard hook lets the Phase 1 endpoint stay decoupled and lets the Phase 3 migration register its guard at boot.
-- The ASO slice registers an identical-shape hook on the same endpoint family (`task3-aso.md` §5.1, on `/aso-users`). The two hooks are independent — one fires only for ASO rows, the other only for STU rows.
-- If the Store-Audit feature is later disabled or removed, unregistering the hook reverts `/stu-users` to its Phase 1 behavior with no code change.
+#### Why a hook rather than editing the endpoint inline
+- The User write route should not statically import Phase 3 tables. A guard hook lets the Phase 1 endpoint stay decoupled and lets the Phase 3 migration register its guard at boot.
+- The ASO slice adds an identical-shape in-flight check on the same endpoints (`task3-aso.md` §5.1). The two are independent — one fires only for ASO rows, the other only for STU rows (`users.user_type_code` discriminates).
+- If the Store-Audit feature is later disabled or removed, unregistering the hook reverts `POST` / `PATCH /users` to its Phase 1 behavior with no code change.
 
 #### Change-log
-- Mutations of `users.location_id` ride on the existing per-user `User` change-log row that `PUT /locations/{id}/stu-users` already emits (Phase 1, `task1.md` §9). The STU slice adds no extra change-log row for the location field.
+- Mutations of `users.location_id` ride on the existing per-user `User` change-log row that `POST` / `PATCH /users` already emits (Phase 1, `task1.md` §3). The STU slice adds no extra change-log row for the location field.
 
 #### Acceptance
-- `PUT /locations/{innoviti_loc_id}/stu-users` adding an STU who has no non-terminal Store-Audit session: returns 200 (Phase 1 behavior preserved).
-- Same call adding (or removing, or reassigning) an STU with an `Incomplete` Store-Audit session: returns 409 `store_location_in_use`, with `{ user_id, audit_index }` in the error fields; **no** other users in the same call get reassigned.
-- Same call where one of several listed STUs is blocked: the whole transaction rolls back; the error envelope names every offending user so the operator can resolve them in one pass.
-- Same call where every listed STU's only `store_audit_sessions` rows are `Cancelled` or `Completed`: returns 200 (only non-terminal statuses block).
+- A `POST` / `PATCH /users` setting an STU's `location_id` when they have no non-terminal Store-Audit session: returns 200/201 (Phase 1 behavior preserved).
+- A `PATCH /users/{id}` that would set/clear/move `location_id` for an STU with an `Incomplete` Store-Audit session: returns 409 `store_location_in_use`, with `{ user_id, audit_index }` in the error fields; the `location_id` is unchanged.
+- An STU whose only `store_audit_sessions` rows are `Cancelled` or `Completed`: the change succeeds (only non-terminal statuses block).
 - `POST /store-audit-sessions` for an STU whose `users.location_id IS NULL`: returns 422 `store_location_not_assigned`.
 
 ### 5.2 Reuse of `accessory_stock_balances` (read-only)
@@ -606,7 +607,7 @@ Per Phase 1 §10's minimal model, the Store-Audit slice writes exactly one `chan
 
 | Trigger                                                              | object_type            | object_id          | action       |
 |----------------------------------------------------------------------|------------------------|--------------------|--------------|
-| `PUT /locations/{id}/stu-users` (Phase 1 — listed for completeness; rides on the existing per-user `User` row) | `User` | `<user_index>` | `Update` |
+| `POST` / `PATCH /users` (Phase 1 — listed for completeness; the STU row whose `location_id` changes) | `User` | `<user_index>` | `Create / Update` |
 | `POST /store-audit-sessions`                                         | `StoreAuditSession`    | `<AIN>`            | `Create`     |
 | `POST /store-audit-sessions/{id}/areas/{area}/table1/scan` (any path) | `StoreAuditSerialRow`  | `<row_id>`         | `Create` or `Update` |
 | `PATCH /store-audit-sessions/{id}/areas/{area}/table1/rows/{row_id}` | `StoreAuditSerialRow`  | `<row_id>`         | `Update`     |
@@ -633,8 +634,8 @@ This list maps the work above to concrete files. Every file is **new**; no file 
   - `store_audit_accessory_rows` table (with `storage_area_code`, unique `(session, area, vendor_sku_id)` index).
   - **No** `user_store_locations` table — assignment uses the Phase 1 `users.location_id` column instead.
   - All idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`).
-- `code/backend/src/routes/storeAuditSessions.js` — all session, scan, row PATCH, submit, modify, complete, cancel endpoints (§§2–4); exports `runStoreAuditSuspensionJob` and the `registerStoreLocationGuard()` function that wires §5.1's hook into `PUT /locations/{id}/stu-users` at boot.
-- **No** `code/backend/src/routes/userStoreLocations.js` — earlier drafts proposed it; dropped. Location assignment uses the Phase 1 `routes/locations.js` (extended in `task1.md` §9 to expose `/stu-users`).
+- `code/backend/src/routes/storeAuditSessions.js` — all session, scan, row PATCH, submit, modify, complete, cancel endpoints (§§2–4); exports `runStoreAuditSuspensionJob` and the `registerStoreLocationGuard()` function that wires §5.1's hook into `POST` / `PATCH /users` at boot.
+- **No** `code/backend/src/routes/userStoreLocations.js` — earlier drafts proposed it; dropped. Location assignment uses the Phase 1 `routes/users.js` (the User form's `location_id` field, `task1.md` §3).
 - **Edits to existing files (the thin integration points):**
   - `code/backend/src/lib/auth.js` — append a new exported `requireStu` middleware next to the existing `requireAso`. No existing export is modified.
   - `code/backend/src/server.js` — mount the new `storeAuditSessions` router, call `registerStoreLocationGuard()` to register §5.1's hook, and start the new `runStoreAuditSuspensionJob` timer alongside the existing ASO suspension timer. ~four lines.
@@ -642,14 +643,14 @@ This list maps the work above to concrete files. Every file is **new**; no file 
 
 ### Frontend
 - `code/frontend/src/pages/StoreAudit.jsx` — the page (§7).
-- **No** new admin page for store-location assignment — the Phase 1 Manage Locations screen's `Assign Personnel → STU Users` sub-picker (`task1.md` §9 UI surface) is where assignment lives.
+- **No** new admin page for store-location assignment — the Phase 1 Manage Users form's Location picker (shown for `location_eligible` types; `task1.md` §3 UI surface) is where assignment lives.
 - **Edits to existing files:**
   - `code/frontend/src/lib/api.js` — append the new API client helpers (`createStoreAuditSession`, `getCurrentStoreAuditSession`, `scanStoreAuditTable1`, etc.) next to the existing ASO helpers. No existing helper is modified.
   - `code/frontend/src/components/Layout.jsx` — add the `Store Audit` nav entry, rendered only when `user.user_type_code === 'STU'`. One conditional `<NavLink>`.
   - `code/frontend/src/main.jsx` — add the `/store-audit` route. One `<Route>`.
 
 ### Tests
-- `code/backend/test/storeAuditSessions.test.js` — covers all acceptance criteria in §2, §3, §4, plus the §5.1 guard-hook behavior on the Phase 1 `/stu-users` endpoint (in-flight session blocks reassignment, etc.).
+- `code/backend/test/storeAuditSessions.test.js` — covers all acceptance criteria in §2, §3, §4, plus the §5.1 guard-hook behavior on the Phase 1 `POST` / `PATCH /users` endpoints (in-flight session blocks a location change, etc.).
 - `code/frontend/src/pages/StoreAudit.test.jsx` (or equivalent under the existing test layout) — covers §7 render states, tab switching, per-area submit/modify, complete/cancel modals.
 
 ---
@@ -660,12 +661,12 @@ This list maps the work above to concrete files. Every file is **new**; no file 
 2. **SIM-to-area mapping** — chose `working` only (SIM state `Active`). Override if SIMs should appear in additional tabs or under different states.
 3. **Per-area expected qty for non-working accessory areas** — chose 0 (no per-area accessory balance tracking yet). Override to extend `accessory_stock_balances` with per-area columns now rather than later.
 4. **AIN counter** — chose a separate `'store_audit'` counter starting at `AIN-50001`. Override to share the ASO `'audit'` counter (a single global AIN sequence).
-5. ~~**Locked-Store-Location join table** — chose a new `user_store_locations` table. Override to share `user_audit_locations` with the ASO slice via a discriminator column.~~ **Resolved (later revision):** dropped both proposals; STU's location uses the Phase 1 `users.location_id` column (`task1.md` §3) and assignment rides on `PUT /locations/{id}/stu-users` (`task1.md` §9). The user-type column on `users` is the discriminator.
+5. ~~**Locked-Store-Location join table** — chose a new `user_store_locations` table. Override to share `user_audit_locations` with the ASO slice via a discriminator column.~~ **Resolved (later revision):** dropped both proposals; STU's location uses the Phase 1 `users.location_id` column (`task1.md` §3) and assignment happens on the User form (`POST` / `PATCH /users`). The user-type column on `users` is the discriminator.
 6. **Missing-count clamping** — chose `max(expected - counted, 0)`. Override to surface signed values ("found extras").
 7. **Auto-suspension behavior** — chose "stays `Incomplete`, just sets `auto_suspended_at`" (mirrors ASO). Override if 30-min idle should hard-transition to a distinct status for STU.
 8. **Cross-area duplicate-scan guard** — chose per-(session, area, scope) scoping. Override if a serial scanned in one area must block being scanned again in any other area of the same session.
 9. **Wrong-Area remark** — chose not to introduce a new reserved phrase for in-Master-row-but-different-state. Override to add `Wrong Area` as a third reserved phrase alongside `Wrong Location` and `Recovered`.
-10. ~~**Locked-Store-Location UI surface** — chose the in-row link on the existing Users page. Override for a dedicated admin page (`StoreUserStoreLocations.jsx`).~~ **Resolved (later revision):** assignment lives in the Manage Locations screen's `Assign Personnel → STU Users` sub-picker (`task1.md` §9 UI surface) — the same panel that already hosts the ASO sub-picker. No edits to the Users page; no dedicated admin page.
+10. ~~**Locked-Store-Location UI surface** — chose the in-row link on the existing Users page. Override for a dedicated admin page (`StoreUserStoreLocations.jsx`).~~ **Resolved (later revision):** assignment lives on the Manage Users form's Location picker (`task1.md` §3 UI surface) — the same picker the ASO slice uses. No dedicated admin page.
 
 ---
 
@@ -686,5 +687,5 @@ This list maps the work above to concrete files. Every file is **new**; no file 
 - **Offline / queued scans when the network drops mid-session** — every scan is an online POST. Offline mode is not in scope.
 - **A full Accessory Master object** — `accessory_stock_balances` (introduced by the ASO slice) is the minimum-viable quantity tracker. A first-class Accessory Master is a future-phase concern.
 - **Moving rows between area tabs** — `storage_area_code` is immutable. If an auditor scans into the wrong tab, the correct fix is per-area Modify + re-scan in the right tab, not a cross-tab move.
-- **Parallel `user_store_locations` join table** — explicitly removed in this revision. The STU's location lives on the Phase 1 `users.location_id` column (`task1.md` §3). The `/users/{id}/store-location` endpoints from earlier drafts no longer exist; assignment rides on the Phase 1 `PUT /locations/{id}/stu-users` route.
+- **Parallel `user_store_locations` join table** — explicitly removed in this revision. The STU's location lives on the Phase 1 `users.location_id` column (`task1.md` §3). The `/users/{id}/store-location` endpoints from earlier drafts no longer exist; assignment happens on the User form (`POST` / `PATCH /users`).
 - **Any DDL against the `users` table in Phase 3 STU** — `users.location_id` is delivered by Phase 1. The Phase 3 STU slice makes no schema change to `users`.

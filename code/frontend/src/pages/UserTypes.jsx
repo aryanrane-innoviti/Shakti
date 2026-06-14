@@ -19,16 +19,19 @@ export default function UserTypes() {
   const load = () => api.get('/user-types').then(setRows);
   useEffect(() => { load(); }, []);
 
-  const startNew = () => { setErrors({}); setEdit({ code: '', label: '' }); };
+  const startNew = () => { setErrors({}); setEdit({ code: '', label: '', location_eligible: false }); };
   const closeEdit = () => { setErrors({}); setEdit(null); };
 
   const save = async () => {
     setErrors({});
     try {
       if (edit.user_type_id) {
-        await api.patch(`/user-types/${edit.user_type_id}`, { label: edit.label });
+        const body = { label: edit.label };
+        // location_eligible is fixed for seeded types; only send it for custom ones.
+        if (!edit.is_seed) body.location_eligible = !!edit.location_eligible;
+        await api.patch(`/user-types/${edit.user_type_id}`, body);
       } else {
-        await api.post('/user-types', { code: edit.code, label: edit.label });
+        await api.post('/user-types', { code: edit.code, label: edit.label, location_eligible: !!edit.location_eligible });
       }
       setEdit(null);
       load();
@@ -68,7 +71,7 @@ export default function UserTypes() {
       <div className="card table-wrap">
         <table>
           <thead>
-            <tr><th>Code</th><th>Label</th><th title="Seed = shipped with the system. Custom = added by an SA. Immutable rows cannot be renamed or deleted.">Origin</th><th></th></tr>
+            <tr><th>Code</th><th>Label</th><th title="Seed = shipped with the system. Custom = added by an SA. Immutable rows cannot be renamed or deleted.">Origin</th><th title="Whether Users of this type attach an Inventory Location on the User form.">Location</th><th></th></tr>
           </thead>
           <tbody>
             {rows.map((t) => (
@@ -79,6 +82,7 @@ export default function UserTypes() {
                   {t.is_seed ? <span className="badge plain">Seed</span> : <span className="badge purple">Custom</span>}
                   {t.is_immutable && <span className="badge system" style={{ marginLeft: 6 }}>Immutable</span>}
                 </td>
+                <td>{t.location_eligible ? <span className="badge active">Yes</span> : <span className="muted">No</span>}</td>
                 <td>
                   <div className="row-actions">
                     {!t.is_immutable && isSA && <button onClick={() => setEdit(t)}>Rename</button>}
@@ -121,6 +125,22 @@ export default function UserTypes() {
               <input value={edit.label || ''} onChange={(e) => setEdit({ ...edit, label: e.target.value })} />
               <div className="help-text">ASCII letters, digits, space, hyphen. 1–50 characters.</div>
               {fieldError('label') && <div className="error-text">{fieldError('label')}</div>}
+            </div>
+            <div className="full">
+              <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center', fontWeight: 'normal' }}>
+                <input
+                  type="checkbox"
+                  checked={!!edit.location_eligible}
+                  disabled={!!edit.user_type_id && !!edit.is_seed}
+                  onChange={(e) => setEdit({ ...edit, location_eligible: e.target.checked })}
+                />
+                Location associated?
+              </label>
+              <div className="help-text">
+                {(!!edit.user_type_id && !!edit.is_seed)
+                  ? 'Fixed for seeded types.'
+                  : 'When on, Users of this type pick an Inventory Location on the User form.'}
+              </div>
             </div>
           </div>
         </Modal>

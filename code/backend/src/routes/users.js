@@ -51,6 +51,29 @@ function stripPassword(row) {
   return rest;
 }
 
+// Phase-3 in-flight-audit guard (relocated here from the old Locations
+// assign-users endpoint — task1.md §3, task3-aso.md §5.1). An ASO/STU who has a
+// non-terminal audit session cannot have their location_id changed. Returns a
+// ready-to-send 409 envelope when blocked, else null. (Only ASO sessions live
+// in audit_sessions today; the STU store-audit table is a future slice.)
+async function inFlightAuditBlock(userId, typeCode) {
+  if (typeCode !== 'ASO' && typeCode !== 'STU') return null;
+  const busy = await one(
+    `SELECT s.audit_index, u.user_index
+       FROM audit_sessions s JOIN users u ON u.user_id = s.auditor_user_id
+      WHERE s.auditor_user_id = $1
+        AND s.status IN ('Incomplete','PendingReview') AND s.deleted_at IS NULL
+      LIMIT 1`,
+    [userId]
+  );
+  if (!busy) return null;
+  return {
+    error: `Cannot change the user's location while they have an active or pending audit (${busy.audit_index}).`,
+    code: 'audit_location_in_use',
+    fields: { user_id: userId, user_index: busy.user_index, audit_index: busy.audit_index },
+  };
+}
+
 router.get('/dashboard/summary', requireAuth, requireAdminRead, async (req, res, next) => {
   try {
     const r = await one(`SELECT COUNT(*)::int AS c FROM users WHERE deleted_at IS NULL`);
@@ -191,6 +214,24 @@ router.post('/', requireAuth, requireUserWrite, async (req, res, next) => {
         return res.status(409).json({ error: 'Employee ID already in use', fields: { employee_id: 'another active user already has this Employee ID' } });
     }
 
+    // Location (task1.md §3): set on the User form only when the user's type is
+    // location-eligible; ignored for any other type. The chosen Location must
+    // belong to the user's own vendor (no Innoviti-specific gate — an ASO/STU
+    // defaults to Innoviti, so its locations are Innoviti by vendor-match). A
+    // brand-new user has no audit session, so the in-flight guard is N/A here.
+    let locationId = null;
+    if (ut.location_eligible && req.body.location_id != null && req.body.location_id !== '') {
+      const loc = await one(
+        `SELECT location_id, vendor_id FROM locations WHERE location_id = $1 AND deleted_at IS NULL`,
+        [Number(req.body.location_id)]
+      );
+      if (!loc)
+        return res.status(422).json({ error: 'Location not found', code: 'location_not_found', fields: { location_id: 'must reference an existing, non-deleted location' } });
+      if (loc.vendor_id !== resolvedVendorId)
+        return res.status(422).json({ error: "A user can only be tied to a location belonging to their own vendor.", code: 'user_vendor_mismatch', fields: { location_id: "must belong to the user's vendor" } });
+      locationId = loc.location_id;
+    }
+
     const hash = password ? hashPassword(password) : null;
     const idx = await nextIndex('user');
 
@@ -199,13 +240,14 @@ router.post('/', requireAuth, requireUserWrite, async (req, res, next) => {
     const aso = ut.code === 'ASO';
     const { rows } = await pool.query(
       `INSERT INTO users (user_index, first_name, last_name, user_type_id, password_hash, email, mobile,
-                          vendor_id, employee_id, address_line_1, address_line_2, pincode, city, state, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'Active') RETURNING *`,
+                          vendor_id, employee_id, address_line_1, address_line_2, pincode, city, state, location_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'Active') RETURNING *`,
       [
         idx, first_name, last_name, user_type_id, hash, email, mobile || null,
         resolvedVendorId, employee_id || null,
         aso ? null : (address_line_1 || null), aso ? null : (address_line_2 || null),
         aso ? null : (pincode || null), aso ? null : (city || null), aso ? null : (state || null),
+        locationId,
       ]
     );
     await logChange('User', idx, req.session, 'Create');
@@ -236,7 +278,7 @@ router.patch('/:id', requireAuth, requireUserWrite, async (req, res, next) => {
 
     // ASO users carry no address (task1.md §3) — drop any address fields from
     // the update so they can't be set via PATCH.
-    const existingType = await one(`SELECT code FROM user_types WHERE user_type_id = $1`, [existing.user_type_id]);
+    const existingType = await one(`SELECT code, location_eligible FROM user_types WHERE user_type_id = $1`, [existing.user_type_id]);
     const ADDRESS_FIELDS = ['address_line_1', 'address_line_2', 'pincode', 'city', 'state'];
     const fields = [
       'first_name', 'last_name', 'email', 'mobile', 'vendor_id', 'employee_id',
@@ -250,6 +292,37 @@ router.patch('/:id', requireAuth, requireUserWrite, async (req, res, next) => {
         sets.push(`${f} = $${params.length}`);
       }
     }
+
+    // Location (task1.md §3): settable for location-eligible types; ignored
+    // otherwise. Vendor-match against the user's effective vendor, and the
+    // Phase-3 in-flight-audit guard fires when the value actually changes.
+    if (existingType?.location_eligible && req.body.location_id !== undefined) {
+      const raw = req.body.location_id;
+      const effectiveVendor = req.body.vendor_id ?? existing.vendor_id;
+      if (raw === null || raw === '') {
+        if (existing.location_id != null) {
+          const blocked = await inFlightAuditBlock(id, existingType.code);
+          if (blocked) return res.status(409).json(blocked);
+          params.push(null); sets.push(`location_id = $${params.length}`);
+        }
+      } else {
+        const newLocId = Number(raw);
+        const loc = await one(
+          `SELECT location_id, vendor_id FROM locations WHERE location_id = $1 AND deleted_at IS NULL`,
+          [newLocId]
+        );
+        if (!loc)
+          return res.status(422).json({ error: 'Location not found', code: 'location_not_found', fields: { location_id: 'must reference an existing, non-deleted location' } });
+        if (loc.vendor_id !== effectiveVendor)
+          return res.status(422).json({ error: "A user can only be tied to a location belonging to their own vendor.", code: 'user_vendor_mismatch', fields: { location_id: "must belong to the user's vendor" } });
+        if (newLocId !== existing.location_id) {
+          const blocked = await inFlightAuditBlock(id, existingType.code);
+          if (blocked) return res.status(409).json(blocked);
+        }
+        params.push(newLocId); sets.push(`location_id = $${params.length}`);
+      }
+    }
+
     if (!sets.length) return res.json(stripPassword(existing));
     sets.push(`updated_at = NOW()`);
     params.push(id);

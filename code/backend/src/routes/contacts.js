@@ -9,13 +9,17 @@ const router = Router();
 
 router.get('/', requireAuth, requireAdminRead, async (req, res, next) => {
   try {
-    const { vendor_id, include_deleted } = req.query;
+    const { vendor_id, location_id, include_deleted } = req.query;
     const where = [];
     const params = [];
     if (!include_deleted) where.push('c.deleted_at IS NULL');
     if (vendor_id) { params.push(Number(vendor_id)); where.push(`c.vendor_id = $${params.length}`); }
-    const sql = `SELECT c.*, v.company_name AS vendor_name FROM contacts c
+    if (location_id) { params.push(Number(location_id)); where.push(`c.location_id = $${params.length}`); }
+    const sql = `SELECT c.*, v.company_name AS vendor_name,
+                        l.location_name AS location_name, l.location_index AS location_index
+                   FROM contacts c
                    LEFT JOIN vendors v ON v.vendor_id = c.vendor_id
+                   LEFT JOIN locations l ON l.location_id = c.location_id
                    ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
                   ORDER BY c.contact_id`;
     res.json(await many(sql, params));
@@ -25,9 +29,12 @@ router.get('/', requireAuth, requireAdminRead, async (req, res, next) => {
 router.get('/:id', requireAuth, requireAdminRead, async (req, res, next) => {
   try {
     const row = await one(
-      `SELECT c.*, v.company_name AS vendor_name FROM contacts c
-        LEFT JOIN vendors v ON v.vendor_id = c.vendor_id
-       WHERE c.contact_id = $1`,
+      `SELECT c.*, v.company_name AS vendor_name,
+              l.location_name AS location_name, l.location_index AS location_index
+         FROM contacts c
+         LEFT JOIN vendors v ON v.vendor_id = c.vendor_id
+         LEFT JOIN locations l ON l.location_id = c.location_id
+        WHERE c.contact_id = $1`,
       [Number(req.params.id)]
     );
     if (!row) return res.status(404).json({ error: 'not_found' });
@@ -63,11 +70,22 @@ router.post('/', requireAuth, requireAdmin, async (req, res, next) => {
     const { first_name, last_name, email, mobile, vendor_id } = req.body;
     const vendor = await one(`SELECT vendor_id FROM vendors WHERE vendor_id = $1 AND deleted_at IS NULL`, [vendor_id]);
     if (!vendor) throw new ValidationError('vendor_id: must reference an existing, active vendor', { vendor_id: 'must reference an existing, active vendor' });
+    // Optional Location (task1.md §4): the Contact owns the association; when set
+    // it must belong to the Contact's own vendor.
+    let locationId = null;
+    if (req.body.location_id != null && req.body.location_id !== '') {
+      const loc = await one(`SELECT location_id, vendor_id FROM locations WHERE location_id = $1 AND deleted_at IS NULL`, [Number(req.body.location_id)]);
+      if (!loc)
+        return res.status(422).json({ error: 'Location not found', code: 'location_not_found', fields: { location_id: 'must reference an existing, non-deleted location' } });
+      if (loc.vendor_id !== vendor_id)
+        return res.status(422).json({ error: "The location must belong to the contact's vendor.", code: 'contact_location_vendor_mismatch', fields: { location_id: "must belong to the contact's vendor" } });
+      locationId = loc.location_id;
+    }
     const idx = await nextIndex('contact');
     const { rows } = await pool.query(
-      `INSERT INTO contacts (contact_index, first_name, last_name, email, mobile, vendor_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [idx, first_name, last_name, email, mobile || null, vendor_id]
+      `INSERT INTO contacts (contact_index, first_name, last_name, email, mobile, vendor_id, location_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [idx, first_name, last_name, email, mobile || null, vendor_id, locationId]
     );
     await logChange('Contact', idx, req.session, 'Create');
     res.status(201).json(rows[0]);
@@ -93,6 +111,24 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res, next) => {
         sets.push(`${f} = $${params.length}`);
       }
     }
+
+    // Optional Location (task1.md §4): null/'' clears it; otherwise it must
+    // belong to the contact's effective vendor (the incoming one if also changed).
+    if (req.body.location_id !== undefined) {
+      const raw = req.body.location_id;
+      if (raw === null || raw === '') {
+        params.push(null); sets.push(`location_id = $${params.length}`);
+      } else {
+        const effectiveVendor = req.body.vendor_id ?? existing.vendor_id;
+        const loc = await one(`SELECT location_id, vendor_id FROM locations WHERE location_id = $1 AND deleted_at IS NULL`, [Number(raw)]);
+        if (!loc)
+          return res.status(422).json({ error: 'Location not found', code: 'location_not_found', fields: { location_id: 'must reference an existing, non-deleted location' } });
+        if (loc.vendor_id !== effectiveVendor)
+          return res.status(422).json({ error: "The location must belong to the contact's vendor.", code: 'contact_location_vendor_mismatch', fields: { location_id: "must belong to the contact's vendor" } });
+        params.push(loc.location_id); sets.push(`location_id = $${params.length}`);
+      }
+    }
+
     if (!sets.length) return res.json(existing);
     sets.push(`updated_at = NOW()`);
     params.push(id);

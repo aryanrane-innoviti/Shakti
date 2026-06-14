@@ -27,6 +27,20 @@ import accessoryStockRoutes from './routes/accessoryStock.js';
 import auditReportRoutes from './routes/auditReports.js';
 
 async function main() {
+  // One-time boot diagnostic for the optional backup database. Prints presence
+  // and URL scheme only — never the credentials — so the Railway deploy logs
+  // reveal whether BACKUP_DATABASE_URL actually reached this container.
+  {
+    const v = process.env.BACKUP_DATABASE_URL;
+    console.log('[boot] BACKUP_DATABASE_URL:', {
+      present: v !== undefined,
+      empty: !v,
+      length: v ? v.length : 0,
+      scheme: v ? String(v).split('://')[0].slice(0, 20) : null,
+      unresolvedReference: v ? String(v).includes('${{') : false,
+    });
+  }
+
   await initDb();
   await runSeed();
 
@@ -55,7 +69,7 @@ async function main() {
   app.use('/loads', loadRoutes);
   app.use('/stock', stockRoutes);
   // Phase 3 ASO slice. The ASO's audit location lives on users.location_id
-  // (assigned via PUT /locations/:id/assigned-users) — there is no separate
+  // (assigned on the User form via POST/PATCH /users) — there is no separate
   // audit-location router.
   app.use('/audit-sessions', auditSessionRoutes);
   app.use('/accessory-stock', accessoryStockRoutes);

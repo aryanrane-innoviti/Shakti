@@ -4,12 +4,13 @@ import { api } from '../lib/api.js';
 import { useToast } from '../lib/toast.jsx';
 import Modal, { ConfirmModal } from '../components/Modal.jsx';
 
-const EMPTY = { first_name: '', last_name: '', email: '', mobile: '', vendor_id: '' };
+const EMPTY = { first_name: '', last_name: '', email: '', mobile: '', vendor_id: '', location_id: '' };
 
 export default function Contacts() {
   const toast = useToast();
   const [contacts, setContacts] = useState([]);
   const [vendors, setVendors] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [filter, setFilter] = useState('');
   const [edit, setEdit] = useState(null);
   const [errors, setErrors] = useState({});
@@ -20,9 +21,16 @@ export default function Contacts() {
 
   const load = () => api.get('/contacts' + (filter ? `?vendor_id=${filter}` : '')).then(setContacts);
   useEffect(() => { load(); }, [filter]);
-  useEffect(() => { api.get('/vendors').then(setVendors); }, []);
+  useEffect(() => {
+    api.get('/vendors').then(setVendors);
+    api.get('/locations').then(setLocations);
+  }, []);
 
   const editing = !!(edit && edit.contact_id);
+  // A Contact's optional Location must belong to the Contact's vendor (task1.md §4).
+  const vendorLocations = locations.filter(
+    (l) => Number(l.vendor_id) === Number(edit?.vendor_id) && !l.deleted_at
+  );
 
   const startNew = () => { setErrors({}); setEdit({ ...EMPTY }); };
   const closeEdit = () => { setErrors({}); setEdit(null); };
@@ -32,6 +40,8 @@ export default function Contacts() {
     try {
       const payload = { ...edit };
       Object.keys(payload).forEach((k) => { if (payload[k] === '') delete payload[k]; });
+      // Send location_id explicitly so clearing it works (null = no location).
+      payload.location_id = edit.location_id === '' || edit.location_id == null ? null : Number(edit.location_id);
       if (editing) await api.patch(`/contacts/${edit.contact_id}`, payload);
       else await api.post('/contacts', payload);
       setEdit(null);
@@ -79,7 +89,7 @@ export default function Contacts() {
       <div className="card table-wrap">
         <table>
           <thead>
-            <tr><th>NIN</th><th>Name</th><th>Email</th><th>Mobile</th><th>Vendor</th><th></th></tr>
+            <tr><th>NIN</th><th>Name</th><th>Email</th><th>Mobile</th><th>Vendor</th><th>Location</th><th></th></tr>
           </thead>
           <tbody>
             {contacts.map((c) => (
@@ -92,6 +102,7 @@ export default function Contacts() {
                   {c.vendor_id ? <Link to={`/vendors/${c.vendor_id}`}>{c.vendor_name}</Link> : c.vendor_name}
                   {c.vendor_status === 'Inactive' && <span className="badge inactive" style={{ marginLeft: 6 }}>Inactive</span>}
                 </td>
+                <td>{c.location_name || '—'}</td>
                 <td>
                   {!c.deleted_at && <>
                     <button onClick={() => setEdit(c)}>Modify</button>{' '}
@@ -123,13 +134,23 @@ export default function Contacts() {
           <div className="form-grid">
             <div className={fieldClass('vendor_id')}>
               <label>Vendor *</label>
-              <select value={edit.vendor_id || ''} onChange={(e) => setEdit({ ...edit, vendor_id: Number(e.target.value) })}>
+              <select value={edit.vendor_id || ''} onChange={(e) => setEdit({ ...edit, vendor_id: Number(e.target.value), location_id: '' })}>
                 <option value="">Pick…</option>
                 {vendors.map((v) => <option key={v.vendor_id} value={v.vendor_id}>{v.company_name}{v.status === 'Inactive' ? ' (Inactive)' : ''}</option>)}
               </select>
               {fieldError('vendor_id') && <div className="error-text">{fieldError('vendor_id')}</div>}
             </div>
-            <div></div>
+            <div className={fieldClass('location_id')}>
+              <label>Location</label>
+              <select value={edit.location_id ?? ''} onChange={(e) => setEdit({ ...edit, location_id: e.target.value })} disabled={!edit.vendor_id}>
+                <option value="">— None —</option>
+                {vendorLocations.map((l) => (
+                  <option key={l.location_id} value={l.location_id}>{l.location_name} ({l.location_index})</option>
+                ))}
+              </select>
+              <div className="help-text">{edit.vendor_id ? "Optional · this vendor's locations only." : 'Pick a vendor first.'}</div>
+              {fieldError('location_id') && <div className="error-text">{fieldError('location_id')}</div>}
+            </div>
             <div className={fieldClass('first_name')}>
               <label>First name *</label>
               <input value={edit.first_name || ''} onChange={(e) => setEdit({ ...edit, first_name: e.target.value })} />
