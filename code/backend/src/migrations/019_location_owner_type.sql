@@ -1,24 +1,16 @@
--- 019: location owner type — every location is owned by EITHER Contact(s) OR
--- ASO user(s), never both. The location form exposes this as a mutually
--- exclusive toggle; this migration is the storage for it.
+-- 019: (SUPERSEDED — now a no-op) location owner-type toggle, REMOVED.
 --
--- Two additive, idempotent changes:
---   1. principal_contact_id becomes NULLABLE — an ASO-owned location stores no
---      contact at all. Contact-owned locations still require it, but that rule
---      now lives at the app layer (routes/locations.js) because it is
---      conditional on owner_type. Every existing row has a principal contact,
---      so dropping the constraint changes nothing for them.
---   2. owner_type records which side of the toggle the location is on. It
---      defaults to 'Contact', so every pre-existing row (all of which carry a
---      principal contact) keeps its current meaning with no backfill needed.
+-- This migration originally added a Contact/ASO `owner_type` toggle to
+-- `locations` and made `principal_contact_id` nullable, to support ASO-owned
+-- locations. That whole Contact/ASO ownership concept was retired in the
+-- object-hierarchy reshape (task1.md §1.12 / §9): a Location now carries only
+-- vendor + name + address, and the Location<->Contact association lives on the
+-- Contact (`contacts.location_id`, migration 024).
 --
--- Migrations re-run on every boot. ALTER COLUMN ... DROP NOT NULL is a no-op
--- once already nullable, and ADD COLUMN IF NOT EXISTS skips the whole
--- definition (CHECK included) on re-run — so both statements are idempotent.
+-- Its columns (`owner_type`, `secondary_contact_id`, `principal_contact_id`)
+-- are dropped by migration 026. This file is intentionally a no-op now: its
+-- former `ALTER COLUMN principal_contact_id DROP NOT NULL` would FAIL on the
+-- boot after 026 removes that column (migrations re-run every boot), so it must
+-- not run. The end state converges identically for fresh and existing DBs.
 
-ALTER TABLE locations
-  ALTER COLUMN principal_contact_id DROP NOT NULL;
-
-ALTER TABLE locations
-  ADD COLUMN IF NOT EXISTS owner_type TEXT NOT NULL DEFAULT 'Contact'
-    CHECK (owner_type IN ('Contact','ASO'));
+SELECT 1;

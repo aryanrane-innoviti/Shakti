@@ -646,7 +646,7 @@ There is **no standalone `/skus/{sku_id}/vendor-skus` route surface** (no GET, P
 - `pincode` (string, 6 digits).
 - `city` (derived from pincode).
 - `state` (derived from pincode).
-- *(No Principal/Secondary contact fields are used.* The Location ↔ Contact association now lives on the Contact (`contacts.location_id`, §4); a Location's contacts are a read-only derived list — see below. The legacy `principal_contact_id` / `secondary_contact_id` / `owner_type` columns physically remain in the schema but are unused by the application — they are deliberately **not** dropped because an earlier idempotent migration re-runs against them on every boot.)*
+- *(No Principal/Secondary contact fields.* The Location ↔ Contact association now lives on the Contact (`contacts.location_id`, §4); a Location's contacts are a read-only derived list — see below. The legacy `principal_contact_id` / `secondary_contact_id` / `owner_type` columns are **dropped** (migration 026; the earlier migration 019 that introduced them is neutralized so it can't fight the drop on the every-boot re-run).)*
 - `created_at`, `updated_at`, `deleted_at` (timestamps).
 
 **Derived (not columns on `locations`)**:
